@@ -27,7 +27,8 @@ This README serves both human users and the agents that drive the skills.
 ## Container-first
 
 Every workflow runs inside the `kermt:latest` docker image, built locally from
-the [`Dockerfile`](../Dockerfile) at the repo root. The first time you run any
+the Dockerfile at the root of your kermt repo (`$KERMT_REPO/Dockerfile`, the
+same one `kermt-setup` builds from). The first time you run any
 skill, the bootstrap helper will build the image (~10–20 min on a typical
 workstation). All subsequent invocations reuse the built image.
 
@@ -189,10 +190,11 @@ tool-agnostic source of truth (Codex / Nemotron read it directly). Restart
 Claude Code once after your first checkout so it picks up the entries.
 
 Personal scope (optional — to use the skills from any directory, not just this
-checkout) — symlink them into your personal skills dir:
+checkout) — from the directory that contains this README, symlink each skill
+into your personal skills dir:
 
 ```bash
-for d in agent/skills/kermt-*/; do
+for d in skills/kermt-*/; do
   name=$(basename "$d")
   ln -sfn "$(realpath "$d")" ~/.claude/skills/"$name"
 done
@@ -205,8 +207,8 @@ effect without re-installing. If you ever rename a skill on disk (e.g.
 
 ### Codex
 
-Codex follows the same agentskills.io layout. Point Codex at
-`agent/skills/` (or symlink each `kermt-*/` directory into its skills
+Codex follows the same agentskills.io layout. Point Codex at the `skills/`
+directory beside this README (or symlink each `kermt-*/` directory into its skills
 discovery path — refer to the
 [Codex skills docs](https://developers.openai.com/codex/skills/) for the
 exact location).
@@ -214,7 +216,8 @@ exact location).
 ### Nemotron and other agentskills.io-compatible agents
 
 Most other agents (Nemotron, Cursor, Gemini CLI, etc.) follow the same
-spec — pass `agent/skills/` directly as a skills directory or attach the
+spec — pass the `skills/` directory beside this README directly as a skills
+directory or attach the
 relevant `<skill-name>/SKILL.md` into context, and invoke by name (e.g.
 "run kermt-finetune on …").
 
@@ -316,15 +319,17 @@ After [`kermt-setup`](skills/kermt-setup/SKILL.md) has built the image, from a
 kermt repo checkout:
 
 ```bash
-# Run the full agent test suite in-container.
-agent/scripts/kermt_container.sh run -- \
+# Run the full agent test suite in-container. The pytest paths are inside the
+# container, where the repo is bind-mounted at /workspace, so they stay
+# repo-relative (agent/tests/) regardless of your host working directory.
+$KERMT_REPO/agent/scripts/kermt_container.sh run -- \
   "python -m pytest agent/tests/ -v --no-header -p no:cacheprovider"
 ```
 
 Override the image tag if you're testing against a non-default build:
 
 ```bash
-KERMT_IMAGE=kermt:rebuild-test agent/scripts/kermt_container.sh run -- \
+KERMT_IMAGE=kermt:rebuild-test $KERMT_REPO/agent/scripts/kermt_container.sh run -- \
   "python -m pytest agent/tests/test_check_checkpoint.py -v"
 ```
 
