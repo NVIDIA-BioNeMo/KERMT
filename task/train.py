@@ -114,8 +114,11 @@ def train(epoch, model, data, loss_func, mtl_loss, optimizer, scheduler,
         if args.cuda:
             class_weights = class_weights.cuda()
 
-        # Run model
-        model.zero_grad()
+        # Run model. optimizer.zero_grad() clears the gradient of every
+        # registered parameter, including mtl_loss.log_sigma (appended to the
+        # optimizer's param groups when --use_mtl_loss). model.zero_grad() alone
+        # would miss it, letting the MTL task-weight gradient accumulate.
+        optimizer.zero_grad()
         preds = model(batch, features_batch)
         loss = loss_func(preds, targets) * class_weights * mask
 
@@ -259,11 +262,14 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
         # Bulid data_loader
         shuffle = True
         mol_collator = MolCollator(shared_dict={}, args=args)
-        train_data = DataLoader(train_data,
-                                batch_size=args.batch_size,
-                                shuffle=shuffle,
-                                num_workers=0,
-                                collate_fn=mol_collator)
+        # Use a separate name so train_data stays the underlying dataset across
+        # ensemble iterations; reassigning it would double-wrap the DataLoader
+        # (DataLoader(DataLoader(...))) on the second and later ensemble models.
+        train_loader = DataLoader(train_data,
+                                  batch_size=args.batch_size,
+                                  shuffle=shuffle,
+                                  num_workers=0,
+                                  collate_fn=mol_collator)
         # Run training
         if args.task_wise_checkpoint:
             best_score = {task: float('inf') if args.minimize_score else -float('inf') for task in args.task_names}
@@ -283,7 +289,7 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
             n_iter, train_loss = train(
                 epoch=epoch,
                 model=model,
-                data=train_data,
+                data=train_loader,
                 loss_func=loss_func,
                 mtl_loss=mtl_loss,
                 optimizer=optimizer,

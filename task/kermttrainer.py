@@ -389,7 +389,6 @@ class KERMTTrainer:
             if train:
                 cum_loss_sum += loss.item()
                 # Run model
-                self.model.zero_grad()
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -726,7 +725,6 @@ class KERMTCMIMTrainer:
             if train:
                 cum_loss_sum += loss.item()
                 # Run model
-                self.model.zero_grad()
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -1072,7 +1070,6 @@ class KERMTHybridTrainer:
 
             if train:
                 cum_loss_sum += overall_loss.item()
-                self.model.zero_grad()
                 self.optimizer.zero_grad()
                 overall_loss.backward()
                 self.optimizer.step()

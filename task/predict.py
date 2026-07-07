@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from rdkit import Chem
 from torch.utils.data import DataLoader
 
 from kermt.data import MolCollator
@@ -103,7 +104,17 @@ def predict(model: nn.Module,
                 continue
 
             if loss_func is not None:
-                loss = loss_func(batch_preds, targets) * class_weights * mask
+                if args.dataset_type == 'classification':
+                    # In eval the model already applies sigmoid to classification
+                    # outputs, so batch_preds are probabilities. loss_func is
+                    # BCEWithLogitsLoss, which would sigmoid a second time. Score
+                    # the eval loss with plain BCE on the probabilities (clamped
+                    # for numerical safety).
+                    probs = batch_preds.clamp(min=1e-7, max=1.0 - 1e-7)
+                    loss = torch.nn.functional.binary_cross_entropy(
+                        probs, targets, reduction='none') * class_weights * mask
+                else:
+                    loss = loss_func(batch_preds, targets) * class_weights * mask
                 loss_batch = loss.sum(axis=0) / torch.clamp(mask.sum(axis=0), min=1.0)
                 loss_batch = loss_batch.cpu().numpy()
                 loss_sum += loss_batch
@@ -165,9 +176,18 @@ def make_predictions(args: Namespace, newest_train_args=None, smiles: List[str] 
     args.features_size = test_data.features_size()
 
     print('Validating SMILES')
-    valid_indices = [i for i in range(len(test_data))]
+    # Drop empty / unparseable / zero-heavy-atom SMILES before featurization —
+    # MolGraph raises on invalid input, so leaving them in aborts the whole run.
+    # valid_indices drives the None-insertion in write_prediction, so the written
+    # predictions realign to the original input rows. (Matches the criterion in
+    # utils.filter_invalid_smiles.)
+    valid_indices = []
+    for i in range(len(test_data)):
+        smi = test_data[i].smiles
+        mol = Chem.MolFromSmiles(smi) if smi else None
+        if mol is not None and mol.GetNumHeavyAtoms() > 0:
+            valid_indices.append(i)
     full_data = test_data
-    # test_data = MoleculeDataset([test_data[i] for i in valid_indices])
     test_data_list = []
     for i in valid_indices:
         test_data_list.append(test_data[i])
@@ -297,6 +317,10 @@ def evaluate_predictions(preds: List[List[float]],
                 continue
 
         if len(valid_targets[i]) == 0:
+            # Append nan (like the all-0/1 branch above) instead of skipping, so
+            # results stays aligned per-task; a bare `continue` would shift every
+            # later task's metric down one index.
+            results.append(float('nan'))
             continue
 
         results.append(metric_func(valid_targets[i], valid_preds[i]))
