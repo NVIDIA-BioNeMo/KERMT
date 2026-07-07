@@ -58,20 +58,27 @@ try:
 except ImportError:
     wandb = None
 
-def cross_validate(args: Namespace, logger: Logger = None) -> Tuple[float, float]:
+def cross_validate(args: Namespace, logger: Logger = None,
+                   rank: int = 0, world_size: int = 1) -> Tuple[float, float]:
     """
     k-fold cross validation.
 
+    :param rank: DDP process rank (0 for single-process / non-DDP runs).
+    :param world_size: total number of DDP processes (1 for non-DDP runs).
     :return: A tuple of mean_score and std_score.
     """
-    info = logger.info if logger is not None else print
+    # Only rank 0 logs/reports under DDP; other ranks stay silent.
+    if rank == 0:
+        info = logger.info if logger is not None else print
+    else:
+        info = lambda *a, **k: None
 
     # Initialize relevant variables
     init_seed = args.seed
     save_dir = args.save_dir
     task_names = get_task_names(args.data_path)
 
-    if args.wandb_project:
+    if args.wandb_project and rank == 0:
         wandb.login()
         wandb.init(
             project=getattr(args, "wandb_project", "grover"),
@@ -98,7 +105,7 @@ def cross_validate(args: Namespace, logger: Logger = None) -> Tuple[float, float
         args.save_dir = os.path.join(save_dir, f'fold_{fold_num}')
         makedirs(args.save_dir)
         if args.parser_name == "finetune":
-            model_scores = run_training(args, logger)
+            model_scores = run_training(args, logger, rank=rank, world_size=world_size)
         else:
             model_scores = run_evaluation(args, logger)
         all_scores.append(model_scores)

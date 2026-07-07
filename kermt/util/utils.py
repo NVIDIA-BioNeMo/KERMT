@@ -673,13 +673,18 @@ def build_optimizer(model: nn.Module, args: Namespace):
     return optimizer
 
 
-def build_lr_scheduler(optimizer, args: Namespace, total_epochs: List[int] = None):
+def build_lr_scheduler(optimizer, args: Namespace, total_epochs: List[int] = None,
+                       world_size: int = 1):
     """
     Builds a learning rate scheduler.
 
     :param optimizer: The Optimizer whose learning rate will be scheduled.
     :param args: Arguments.
     :param total_epochs: The total number of epochs for which the model will be task.
+    :param world_size: number of DDP processes. Under DDP each rank sees
+        1/world_size of the data (via DistributedSampler), so the number of
+        optimizer steps per epoch is divided by world_size (matches the effective
+        global batch of batch_size * world_size, as in pretrain_ddp.py).
     :return: An initialized learning rate scheduler.
     """
 
@@ -688,12 +693,12 @@ def build_lr_scheduler(optimizer, args: Namespace, total_epochs: List[int] = Non
     # so we only have task params (1 group) with full LR (fine_tune_coff=1.0)
     # When fine_tune_coff > 0, we have 2 groups: encoder (index 0) and task (index 1)
     scheduler_fine_tune_coff = 1.0 if args.fine_tune_coff == 0 else args.fine_tune_coff
-    
+
     return NoamLR(
         optimizer=optimizer,
         warmup_epochs=args.warmup_epochs,
         total_epochs=args.epochs,
-        steps_per_epoch=args.train_data_size // args.batch_size,
+        steps_per_epoch=args.train_data_size // (args.batch_size * world_size),
         init_lr=args.init_lr,
         max_lr=args.max_lr,
         final_lr=args.final_lr,
