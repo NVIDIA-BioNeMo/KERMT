@@ -126,13 +126,27 @@ def train(epoch, model, data, loss_func, mtl_loss, optimizer, scheduler,
         loss = loss_func(preds, targets) * class_weights * mask
 
         if mtl_loss is not None:
-            # Compute per-task mean losses, handling division by zero for tasks with no valid samples
+            # Per-task mean loss. Under DDP the normalization must use the GLOBAL per-task
+            # valid-label count, not each rank's local count: DDP averages the per-rank
+            # gradients (1/world_size), so dividing by a local count weights ranks equally
+            # rather than per-label and systematically down-weights tasks whose labels land on
+            # only a subset of ranks. So all-reduce the count (not the loss sum, which stays
+            # local so each rank differentiates only its own samples), then scale by world_size
+            # to cancel DDP's 1/world_size average -> the net normalization is the true global
+            # per-label mean, matching a single-GPU run. Reduces to the old local mean when
+            # world_size == 1 or per-rank counts are equal.
             task_mask_sum = mask.sum(axis=0)
+            if world_size > 1 and dist.is_initialized():
+                dist.all_reduce(task_mask_sum, op=dist.ReduceOp.SUM)
             task_mask_sum = torch.clamp(task_mask_sum, min=1.0)  # Avoid division by zero
-            task_losses = loss.sum(axis=0) / task_mask_sum
+            task_losses = world_size * loss.sum(axis=0) / task_mask_sum
             loss = mtl_loss(task_losses)
         else:
-            loss = loss.sum() / mask.sum()
+            # Same global-count normalization for the single pooled loss (see the MTL branch).
+            mask_sum = mask.sum()
+            if world_size > 1 and dist.is_initialized():
+                dist.all_reduce(mask_sum, op=dist.ReduceOp.SUM)
+            loss = world_size * loss.sum() / torch.clamp(mask_sum, min=1.0)
 
         loss_sum += loss.item()
         iter_count += args.batch_size
