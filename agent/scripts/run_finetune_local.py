@@ -21,8 +21,8 @@ the ckpt dictates so the FFN heads attach to a consistent encoder.
 
 Single-GPU is the default for finetune. `--gpus N` picks a specific device id
 (defaults to GPU 0). For data-parallel multi-GPU finetuning, pass `--num-gpus N`
-(N>1): the runner launches `finetune_ddp.py` with `WORLD_SIZE=N` instead of
-`main.py finetune`, and `--batch-size` is interpreted per-GPU.
+(N>1): the runner sets `WORLD_SIZE=N` and `main.py finetune` spawns one process
+per GPU, and `--batch-size` is interpreted per-GPU.
 
 CLI
 ---
@@ -71,7 +71,6 @@ AGENT_DIR = REPO_ROOT / "agent"
 DEFAULTS_PATH = AGENT_DIR / "config" / "defaults_finetune.json"
 CHECK_CHECKPOINT_PATH = AGENT_DIR / "scripts" / "check_checkpoint.py"
 MAIN_PY_PATH = REPO_ROOT / "main.py"
-FINETUNE_DDP_PATH = REPO_ROOT / "finetune_ddp.py"
 
 # Architecture fields the runner pulls from the ckpt and refuses to let the
 # user override. Mirrors the pretrain runner's ARCH_FLAGS_FROM_CKPT but adds
@@ -195,18 +194,16 @@ def _build_argv(
 ) -> list[str]:
     """Constructs the full finetune argv as a list of strings.
 
-    num_gpus == 1 -> single-process `main.py finetune ...` (default, unchanged).
-    num_gpus  > 1 -> data-parallel `finetune_ddp.py ...` (DDP; the launcher
-    inserts the `finetune` subcommand itself, so it is omitted here). All other
-    flags are identical between the two paths.
+    Single-process and multi-GPU (DDP) finetune share one entrypoint,
+    `main.py finetune ...`. DDP is selected at runtime by the WORLD_SIZE env var
+    (this runner sets it to num_gpus when num_gpus > 1; main.py then spawns one
+    process per GPU). The argv is therefore identical for both; num_gpus is kept
+    only to document that --batch_size is per-GPU under DDP.
     """
     outputs = manifest["outputs"]
     method = manifest["split_method"]
 
-    if num_gpus > 1:
-        argv: list[str] = [sys.executable, "-u", str(FINETUNE_DDP_PATH)]
-    else:
-        argv = [sys.executable, "-u", str(MAIN_PY_PATH), "finetune"]
+    argv: list[str] = [sys.executable, "-u", str(MAIN_PY_PATH), "finetune"]
 
     # Data + features paths
     if method == "deferred_to_runner":
@@ -285,7 +282,7 @@ def _build_argv(
     if applied.get("show_individual_scores", {}).get("value"):
         argv += ["--show_individual_scores"]
 
-    # GPU + save_dir. Under DDP (num_gpus>1) gpu is None: finetune_ddp.py pins
+    # GPU + save_dir. Under DDP (num_gpus>1) gpu is None: main.py finetune pins
     # each rank to its own device, and run_training ignores args.gpu when
     # distributed, so no --gpu flag is passed.
     if gpu is not None:
@@ -328,7 +325,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     num_gpus = max(1, int(getattr(args, "num_gpus", 1) or 1))
     distributed = num_gpus > 1
     if distributed:
-        # Data-parallel DDP: finetune_ddp.py uses GPUs 0..num_gpus-1 (one rank
+        # Data-parallel DDP: main.py finetune uses GPUs 0..num_gpus-1 (one rank
         # each) via WORLD_SIZE; a single-device pin does not apply.
         gpu = None
     else:
@@ -339,7 +336,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # MTL FFN consistency
     _validate_mtl_consistency(applied)
 
-    # 5. Build the finetune argv (main.py finetune, or finetune_ddp.py if num_gpus>1).
+    # 5. Build the finetune argv (always main.py finetune; DDP selected via WORLD_SIZE).
     argv = _build_argv(
         gpu=gpu, out_dir=out_dir, manifest=manifest, ckpt=ckpt,
         arch=arch, applied=applied, num_gpus=num_gpus,
@@ -388,14 +385,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     env = os.environ.copy()
     if distributed:
-        # DDP: finetune_ddp.py spawns one rank per GPU and reads WORLD_SIZE.
+        # DDP: main.py finetune reads WORLD_SIZE and spawns one process per GPU.
         # Do not pin CUDA_VISIBLE_DEVICES to a single device.
         env["WORLD_SIZE"] = str(num_gpus)
     else:
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    # main.py / finetune_ddp.py enable strict deterministic algorithms via
-    # `torch.use_deterministic_algorithms(True)` (kermt/main.py:23); CuBLAS
-    # then requires this env var to be set.
+    # main.py enables strict deterministic algorithms via
+    # `torch.use_deterministic_algorithms(True)`; CuBLAS then requires this env var.
     env.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
     log_file = out_dir / "logs" / "finetune.log"
@@ -423,8 +419,9 @@ def main(argv: list[str] | None = None) -> int:
                         "Ignored when --num-gpus > 1 (DDP uses ranks 0..N-1).")
     p.add_argument("--num-gpus", type=int, default=1,
                    help="Number of GPUs for data-parallel (DDP) finetune. Default 1 "
-                        "(single-process main.py finetune, unchanged). N>1 launches "
-                        "finetune_ddp.py with WORLD_SIZE=N; --batch-size is per-GPU.")
+                        "(single-process main.py finetune, unchanged). N>1 runs "
+                        "main.py finetune with WORLD_SIZE=N (one process per GPU); "
+                        "--batch-size is per-GPU.")
     p.add_argument("--dry-run", action="store_true",
                    help="Write run.json + print the command without executing.")
 

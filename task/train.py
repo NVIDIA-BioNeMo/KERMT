@@ -196,9 +196,10 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False,
     :param world_size: number of DDP processes (1 for non-DDP runs).
     :return: A list of ensemble scores for each task.
     """
-    # DDP is active only when a process group has been initialized
-    # (i.e. launched via finetune_ddp.py). `python main.py finetune ...` keeps
-    # world_size=1, is_distributed=False, and behaves exactly as before.
+    # DDP is active only when a process group has been initialized (i.e. launched
+    # with WORLD_SIZE>1 via `main.py finetune`, which spawns one process per GPU).
+    # `python main.py finetune ...` without WORLD_SIZE keeps world_size=1,
+    # is_distributed=False, and behaves exactly as before.
     is_distributed = dist.is_available() and dist.is_initialized()
     is_main = (rank == 0)
 

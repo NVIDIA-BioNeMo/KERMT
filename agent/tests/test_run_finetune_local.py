@@ -457,6 +457,28 @@ def test_gpu_id_propagates(tmp_path: Path) -> None:
     assert argv[argv.index("--gpu") + 1] == "2"
 
 
+def test_multi_gpu_uses_main_entrypoint(tmp_path: Path) -> None:
+    """DDP finetune (--num-gpus > 1) uses the same `main.py finetune` entrypoint
+    (the finetune_ddp.py launcher was removed); DDP is selected via WORLD_SIZE."""
+    ckpt, prep, val = _setup(tmp_path)
+    code, m = _run(
+        "--ckpt", str(ckpt), "--prepare-manifest", str(prep),
+        "--ckpt-validator-out", str(val), "--out", str(tmp_path / "run"),
+        "--dataset-type", "regression",
+        "--num-gpus", "2", "--dry-run",
+    )
+    assert code == 0, m
+    manifest = m["manifest"]
+    assert manifest["num_gpus"] == 2
+    assert manifest["gpu"] is None  # DDP: no single-device pin
+    argv = manifest["argv"]
+    assert "main.py" in argv[2]
+    assert argv[3] == "finetune"
+    assert all("finetune_ddp" not in str(a) for a in argv)
+    # DDP is selected at runtime via WORLD_SIZE in the replay command.
+    assert "WORLD_SIZE" in manifest["cmd_replay"]
+
+
 # ---------------------------------------------------------------------------
 # Manifest schema
 # ---------------------------------------------------------------------------

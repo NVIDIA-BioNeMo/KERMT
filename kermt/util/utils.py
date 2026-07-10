@@ -74,8 +74,8 @@ def seed_rngs(seed: int) -> None:
 def setup_determinism(seed: int) -> None:
     """Seed all RNGs and enable deterministic algorithms.
 
-    Shared by the finetune / HPO / DDP entry points (main.py, main_hpo.py,
-    finetune_ddp.py) so their determinism setup stays in lockstep. Also sets
+    Shared by the finetune / HPO entry points (main.py -- single-process and DDP
+    finetune -- and main_hpo.py) so their determinism setup stays in lockstep. Also sets
     CUBLAS_WORKSPACE_CONFIG, which torch.use_deterministic_algorithms requires
     for cuBLAS on CUDA >= 10.2.
     """

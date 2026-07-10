@@ -88,8 +88,8 @@ Optional:
 - `--gpus 0` — single GPU id for single-process finetune (default 0). Ignored
   when `--num-gpus > 1`.
 - `--num-gpus N` — number of GPUs for data-parallel DDP finetune. Default 1
-  (single-process, unchanged). N>1 launches `finetune_ddp.py` with
-  `WORLD_SIZE=N`; `--batch-size` is per-GPU.
+  (single-process, unchanged). N>1 runs `main.py finetune` with `WORLD_SIZE=N`
+  (one process per GPU); `--batch-size` is per-GPU.
 - `--from-prepare <dir>` — skip the prepare step and reuse an existing
   `prepare_data.json` in `<dir>`. Useful when iterating on hyperparameters.
 
