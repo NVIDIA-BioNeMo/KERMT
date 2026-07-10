@@ -323,13 +323,17 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False,
         if is_distributed:
             train_sampler = DistributedSampler(train_data, num_replicas=world_size,
                                                rank=rank, shuffle=True)
+            # drop_last=False: DistributedSampler pads to an equal sample count per rank, so
+            # every rank has the same number of batches and DDP stays in sync without dropping
+            # data. drop_last=True would discard up to world_size*(batch_size-1) samples -- a
+            # large fraction for small finetune sets on many GPUs -- and diverge from single-GPU.
             train_loader = DataLoader(train_data,
                                       batch_size=args.batch_size,
                                       shuffle=False,
                                       num_workers=0,
                                       collate_fn=mol_collator,
                                       sampler=train_sampler,
-                                      drop_last=True)
+                                      drop_last=False)
         else:
             train_sampler = None
             train_loader = DataLoader(train_data,
@@ -372,22 +376,32 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False,
             )
             t_time = time.time() - s_time
             s_time = time.time()
-            # Evaluate on the unwrapped model over the FULL val set. Every rank
-            # computes identical metrics (weights are DDP-synced), so best-model
-            # decisions agree across ranks; only rank 0 writes checkpoints.
-            val_scores, val_loss = evaluate(
-                model=core_model,
-                data=val_data,
-                loss_func=loss_func,
-                num_tasks=args.num_tasks,
-                metric_func=metric_func,
-                batch_size=args.batch_size,
-                dataset_type=args.dataset_type,
-                scaler=scaler,
-                shared_dict=shared_dict,
-                logger=logger,
-                args=args
-            )
+            # Evaluate on the unwrapped model over the FULL val set. Under DDP, only rank 0
+            # scores (evaluate() runs a plain, non-DDP forward on core_model, so it involves no
+            # collectives and is safe to run on a single rank) -- this avoids every rank
+            # redundantly scoring the whole val set, which is wasteful for large val sets. The
+            # scores are then broadcast so every rank makes the same best-model / early-stop
+            # decisions; only rank 0 writes checkpoints.
+            if is_main:
+                val_scores, val_loss = evaluate(
+                    model=core_model,
+                    data=val_data,
+                    loss_func=loss_func,
+                    num_tasks=args.num_tasks,
+                    metric_func=metric_func,
+                    batch_size=args.batch_size,
+                    dataset_type=args.dataset_type,
+                    scaler=scaler,
+                    shared_dict=shared_dict,
+                    logger=logger,
+                    args=args
+                )
+            else:
+                val_scores, val_loss = None, None
+            if is_distributed:
+                payload = [val_scores, val_loss]
+                dist.broadcast_object_list(payload, src=0, device=torch.device(f"cuda:{rank}"))
+                val_scores, val_loss = payload
             avg_val_loss = np.nanmean(val_loss)
             v_time = time.time() - s_time
             # Average validation score
