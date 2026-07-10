@@ -37,5 +37,5 @@
 
   "_about_mtl": "Per-target task-specific FFN heads are exposed via ffn_num_task_specific_layers (default 0 == off) and ffn_task_specific_hidden_size (default null; required when ffn_num_task_specific_layers > 0). When >0, each target column gets its own N-layer FFN stacked on the shared trunk; useful for heterogeneous multi-target finetunes (e.g. solubility + permeability + metabolic stability together). Override via --ffn-num-task-specific-layers N --ffn-task-specific-hidden-size H.",
 
-  "_about_gpu_selection": "GPU selection is auto-detected at runtime, not a default here. Finetune defaults to GPU 0; override with --gpus 0,2 etc."
+  "_about_gpu_selection": "GPU selection is auto-detected at runtime, not a default here. Finetune defaults to GPU 0. Use --gpus <id> to pick a single device for single-GPU finetune; use --num-gpus N for multi-GPU data-parallel (DDP)."
 }
