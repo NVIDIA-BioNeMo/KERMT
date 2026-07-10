@@ -63,6 +63,28 @@ from kermt.util.nn_utils import initialize_weights
 from kermt.util.scheduler import NoamLR
 
 
+def seed_rngs(seed: int) -> None:
+    """Seed the torch (CPU + CUDA), numpy, and python RNGs."""
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+def setup_determinism(seed: int) -> None:
+    """Seed all RNGs and enable deterministic algorithms.
+
+    Shared by the finetune / HPO / DDP entry points (main.py, main_hpo.py,
+    finetune_ddp.py) so their determinism setup stays in lockstep. Also sets
+    CUBLAS_WORKSPACE_CONFIG, which torch.use_deterministic_algorithms requires
+    for cuBLAS on CUDA >= 10.2.
+    """
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    seed_rngs(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(mode=True)
+
+
 def get_model_args():
     """
     Get model structure related parameters.

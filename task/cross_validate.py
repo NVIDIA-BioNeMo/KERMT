@@ -40,7 +40,6 @@ This implementation is adapted from
 https://github.com/chemprop/chemprop/blob/master/chemprop/train/cross_validate.py
 """
 import os
-import random
 import time
 from argparse import Namespace
 from logging import Logger
@@ -51,6 +50,7 @@ import torch
 
 from kermt.util.utils import get_task_names
 from kermt.util.utils import makedirs
+from kermt.util.utils import seed_rngs
 from task.run_evaluation import run_evaluation
 from task.train import run_training
 try:
@@ -97,10 +97,7 @@ def cross_validate(args: Namespace, logger: Logger = None,
         # Reset random seeds for this fold to ensure different model initialization
         # This is important when using separate train/val/test paths (no data splitting)
         # so that each fold produces a model with different random weight initialization
-        torch.manual_seed(args.seed)
-        torch.cuda.manual_seed_all(args.seed)
-        np.random.seed(args.seed)
-        random.seed(args.seed)
+        seed_rngs(args.seed)
         
         args.save_dir = os.path.join(save_dir, f'fold_{fold_num}')
         makedirs(args.save_dir)

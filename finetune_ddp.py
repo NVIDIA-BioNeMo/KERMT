@@ -37,10 +37,8 @@ Notes:
     does not go through this launcher.
 """
 import os
-import random
 import sys
 
-import numpy as np
 import torch
 import torch.multiprocessing as mp
 from rdkit import RDLogger
@@ -49,24 +47,11 @@ from torch.distributed import destroy_process_group
 from kermt.data.torchvocab import MolVocab
 from kermt.util.ddp_utils import configure_nccl_for_topology, ddp_setup
 from kermt.util.parsing import parse_args
-from kermt.util.utils import create_logger
+from kermt.util.utils import create_logger, setup_determinism
 from task.cross_validate import cross_validate
 
 
-def _setup_determinism(seed: int):
-    """Match the single-process determinism setup in main.py:setup()."""
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms(mode=True)
-
-
 def ddp_main(rank: int, world_size: int):
-    # Deterministic algorithms (enabled in _setup_determinism, matching main.py)
-    # require this for CuBLAS on CUDA >= 10.2. Mirrors run_finetune_local.py.
-    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     ddp_setup(rank, world_size)
 
     # Suppress RDKit logging in every worker.
@@ -80,7 +65,9 @@ def ddp_main(rank: int, world_size: int):
         sys.argv.insert(1, 'finetune')
     args = parse_args()
 
-    _setup_determinism(args.seed)
+    # setup_determinism also sets CUBLAS_WORKSPACE_CONFIG, which
+    # torch.use_deterministic_algorithms requires for cuBLAS on CUDA >= 10.2.
+    setup_determinism(args.seed)
 
     # Only rank 0 writes logs; other ranks stay quiet.
     logger = create_logger(name='train', save_dir=args.save_dir, quiet=False) if rank == 0 else None

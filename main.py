@@ -1,4 +1,3 @@
-import random
 import subprocess
 
 import numpy as np
@@ -6,21 +5,12 @@ import torch
 from rdkit import RDLogger
 
 from kermt.util.parsing import parse_args, get_newest_train_args
-from kermt.util.utils import create_logger
+from kermt.util.utils import create_logger, setup_determinism
 from task.cross_validate import cross_validate
 from task.fingerprint import generate_fingerprints
 from task.predict import make_predictions, write_prediction
 from kermt.data.torchvocab import MolVocab
 
-
-def setup(seed):
-    # frozen random seed
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms(mode=True)
 
 def get_git_branch_commit():
     try:
@@ -47,7 +37,7 @@ if __name__ == '__main__':
 
     # setup random seed
     print(f"Setting up with random seed: {args.seed}")
-    setup(seed=args.seed)
+    setup_determinism(args.seed)
     print(f"args: {args}")
 
     branch, commit = get_git_branch_commit()
