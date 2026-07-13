@@ -37,6 +37,7 @@
 """
 The fingerprint generation function.
 """
+import copy
 from argparse import Namespace
 from logging import Logger
 from typing import List
@@ -63,6 +64,9 @@ def do_generate(model: nn.Module,
     :return: A list of fingerprints.
     """
     model.eval()
+    # Disable bond dropout locally without mutating the shared args (same pattern
+    # as predict(); see issue #22).
+    args = copy.copy(args)
     args.bond_drop_rate = 0
     preds = []
 

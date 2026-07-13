@@ -37,6 +37,7 @@
 """
 The predict function using the finetuned model to make the prediction. .
 """
+import copy
 from argparse import Namespace
 from typing import List
 
@@ -75,6 +76,13 @@ def predict(model: nn.Module,
     """
     # debug = logger.debug if logger is not None else print
     model.eval()
+    # Evaluation must not apply bond dropout, but do NOT mutate the shared args:
+    # training and eval reuse one args instance and graphs are rebuilt every epoch
+    # (caching is off by default), so setting args.bond_drop_rate = 0 here would
+    # permanently disable bond dropout for all later training epochs -- and under
+    # DDP, where only rank 0 evaluates, desync augmentation across ranks. Use a
+    # shallow copy so the override is local to this call. See issue #22.
+    args = copy.copy(args)
     args.bond_drop_rate = 0
     preds = []
 
