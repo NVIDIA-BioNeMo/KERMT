@@ -19,9 +19,10 @@ Arch params come exclusively from the ckpt's saved_args (via check_checkpoint.py
 User-supplied arch flags are not exposed; the runner refuses to override what
 the ckpt dictates so the FFN heads attach to a consistent encoder.
 
-Single-GPU is the default for finetune (per agent/README's hardware table —
-multi-GPU finetune is not currently supported and main.py's finetune path
-doesn't DDP). `--gpus N` picks a specific device id; defaults to GPU 0.
+Single-GPU is the default for finetune. `--gpus N` picks a specific device id
+(defaults to GPU 0). For data-parallel multi-GPU finetuning, pass `--num-gpus N`
+(N>1): the runner sets `WORLD_SIZE=N` and `main.py finetune` spawns one process
+per GPU, and `--batch-size` is interpreted per-GPU.
 
 CLI
 ---
@@ -189,8 +190,16 @@ def _validate_mtl_consistency(applied: dict[str, dict[str, Any]]) -> None:
 def _build_argv(
     *, gpu: int, out_dir: Path, manifest: dict[str, Any], ckpt: Path,
     arch: dict[str, Any], applied: dict[str, dict[str, Any]],
+    num_gpus: int = 1,
 ) -> list[str]:
-    """Constructs the full `main.py finetune` argv as a list of strings."""
+    """Constructs the full finetune argv as a list of strings.
+
+    Single-process and multi-GPU (DDP) finetune share one entrypoint,
+    `main.py finetune ...`. DDP is selected at runtime by the WORLD_SIZE env var
+    (this runner sets it to num_gpus when num_gpus > 1; main.py then spawns one
+    process per GPU). The argv is therefore identical for both; num_gpus is kept
+    only to document that --batch_size is per-GPU under DDP.
+    """
     outputs = manifest["outputs"]
     method = manifest["split_method"]
 
@@ -273,8 +282,11 @@ def _build_argv(
     if applied.get("show_individual_scores", {}).get("value"):
         argv += ["--show_individual_scores"]
 
-    # GPU + save_dir
-    argv += ["--gpu", str(gpu)]
+    # GPU + save_dir. Under DDP (num_gpus>1) gpu is None: main.py finetune pins
+    # each rank to its own device, and run_training ignores args.gpu when
+    # distributed, so no --gpu flag is passed.
+    if gpu is not None:
+        argv += ["--gpu", str(gpu)]
     argv += ["--save_dir", str(out_dir / "ckpt")]
 
     return argv
@@ -309,25 +321,33 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     arch = _arch_from_validator(validator_out)
     model_type = validator_out.get("model_type")
 
-    # 3. GPU selection (single-GPU only).
-    gpu = resolve_single_gpu(args.gpus, workflow="finetune")
+    # 3. GPU selection.
+    num_gpus = max(1, int(getattr(args, "num_gpus", 1) or 1))
+    distributed = num_gpus > 1
+    if distributed:
+        # Data-parallel DDP: main.py finetune uses GPUs 0..num_gpus-1 (one rank
+        # each) via WORLD_SIZE; a single-device pin does not apply.
+        gpu = None
+    else:
+        gpu = resolve_single_gpu(args.gpus, workflow="finetune")
 
     # 4. Apply defaults + collect args_applied.
     applied = _apply_defaults(args, defaults)
     # MTL FFN consistency
     _validate_mtl_consistency(applied)
 
-    # 5. Build the main.py finetune argv.
+    # 5. Build the finetune argv (always main.py finetune; DDP selected via WORLD_SIZE).
     argv = _build_argv(
         gpu=gpu, out_dir=out_dir, manifest=manifest, ckpt=ckpt,
-        arch=arch, applied=applied,
+        arch=arch, applied=applied, num_gpus=num_gpus,
     )
 
     # 6. Build the run.json manifest.
     commit, dirty = git_commit_with_env_override(REPO_ROOT)
     image_tag = os.environ.get("KERMT_IMAGE", "kermt:latest")
     image_digest = docker_image_digest(image_tag)
-    cmd_replay = format_cmd_replay(argv, env={"CUDA_VISIBLE_DEVICES": gpu})
+    replay_env = {"WORLD_SIZE": str(num_gpus)} if distributed else {"CUDA_VISIBLE_DEVICES": gpu}
+    cmd_replay = format_cmd_replay(argv, env=replay_env)
     targets = manifest.get("targets")
     run_manifest: dict[str, Any] = {
         "workflow": "finetune",
@@ -344,6 +364,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         },
         "model_type": model_type,
         "gpu": gpu,
+        "num_gpus": num_gpus,
+        "distributed": distributed,
         "args_applied": applied,
         "arch": arch,
         "save_dir": str(out_dir / "ckpt"),
@@ -362,10 +384,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         return run_manifest
 
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    if distributed:
+        # DDP: main.py finetune reads WORLD_SIZE and spawns one process per GPU.
+        # Do not pin CUDA_VISIBLE_DEVICES to a single device.
+        env["WORLD_SIZE"] = str(num_gpus)
+    else:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
     # main.py enables strict deterministic algorithms via
-    # `torch.use_deterministic_algorithms(True)` (kermt/main.py:23); CuBLAS
-    # then requires this env var to be set.
+    # `torch.use_deterministic_algorithms(True)`; CuBLAS then requires this env var.
     env.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
     log_file = out_dir / "logs" / "finetune.log"
@@ -389,8 +415,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ckpt-validator-out", default=None,
                    help="Optional cached check_checkpoint.py JSON; computed if absent.")
     p.add_argument("--gpus", default=None,
-                   help="Single GPU id (default 0). Finetune is single-GPU only; "
-                        "passing '0,1' is rejected with a clear error.")
+                   help="Single GPU id for single-process finetune (default 0). "
+                        "Ignored when --num-gpus > 1 (DDP uses ranks 0..N-1).")
+    p.add_argument("--num-gpus", type=int, default=1,
+                   help="Number of GPUs for data-parallel (DDP) finetune. Default 1 "
+                        "(single-process main.py finetune, unchanged). N>1 runs "
+                        "main.py finetune with WORLD_SIZE=N (one process per GPU); "
+                        "--batch-size is per-GPU.")
     p.add_argument("--dry-run", action="store_true",
                    help="Write run.json + print the command without executing.")
 

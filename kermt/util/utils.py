@@ -63,6 +63,28 @@ from kermt.util.nn_utils import initialize_weights
 from kermt.util.scheduler import NoamLR
 
 
+def seed_rngs(seed: int) -> None:
+    """Seed the torch (CPU + CUDA), numpy, and python RNGs."""
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+def setup_determinism(seed: int) -> None:
+    """Seed all RNGs and enable deterministic algorithms.
+
+    Shared by the finetune / HPO entry points (main.py -- single-process and DDP
+    finetune -- and main_hpo.py) so their determinism setup stays in lockstep. Also sets
+    CUBLAS_WORKSPACE_CONFIG, which torch.use_deterministic_algorithms requires
+    for cuBLAS on CUDA >= 10.2.
+    """
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    seed_rngs(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(mode=True)
+
+
 def get_model_args():
     """
     Get model structure related parameters.
@@ -673,13 +695,18 @@ def build_optimizer(model: nn.Module, args: Namespace):
     return optimizer
 
 
-def build_lr_scheduler(optimizer, args: Namespace, total_epochs: List[int] = None):
+def build_lr_scheduler(optimizer, args: Namespace, total_epochs: List[int] = None,
+                       world_size: int = 1):
     """
     Builds a learning rate scheduler.
 
     :param optimizer: The Optimizer whose learning rate will be scheduled.
     :param args: Arguments.
     :param total_epochs: The total number of epochs for which the model will be task.
+    :param world_size: number of DDP processes. Under DDP each rank sees
+        1/world_size of the data (via DistributedSampler), so the number of
+        optimizer steps per epoch is divided by world_size (matches the effective
+        global batch of batch_size * world_size, as in pretrain_ddp.py).
     :return: An initialized learning rate scheduler.
     """
 
@@ -688,12 +715,12 @@ def build_lr_scheduler(optimizer, args: Namespace, total_epochs: List[int] = Non
     # so we only have task params (1 group) with full LR (fine_tune_coff=1.0)
     # When fine_tune_coff > 0, we have 2 groups: encoder (index 0) and task (index 1)
     scheduler_fine_tune_coff = 1.0 if args.fine_tune_coff == 0 else args.fine_tune_coff
-    
+
     return NoamLR(
         optimizer=optimizer,
         warmup_epochs=args.warmup_epochs,
         total_epochs=args.epochs,
-        steps_per_epoch=args.train_data_size // args.batch_size,
+        steps_per_epoch=args.train_data_size // (args.batch_size * world_size),
         init_lr=args.init_lr,
         max_lr=args.max_lr,
         final_lr=args.final_lr,

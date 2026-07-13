@@ -23,7 +23,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import random
 import shutil
 from functools import partial
 import os
@@ -33,7 +32,7 @@ from rdkit import RDLogger
 import json
 
 from kermt.util.parsing import parse_args, get_newest_train_args
-from kermt.util.utils import create_logger
+from kermt.util.utils import create_logger, setup_determinism
 from task.cross_validate import cross_validate
 from task.fingerprint import generate_fingerprints
 from task.predict import make_predictions, write_prediction
@@ -46,15 +45,6 @@ from optuna.study import MaxTrialsCallback
 from optuna.trial import TrialState
 
 INIT_LR_FACTOR = 10
-
-def setup(seed):
-    # frozen random seed
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms(mode=True)
 
 def objective_all(trial, args, logger):
     """
@@ -216,7 +206,7 @@ if __name__ == "__main__":
     args = parse_args()
     print(f"args: {args}")
     # setup random seed
-    setup(seed=args.seed)
+    setup_determinism(args.seed)
 
     # Set up Optuna storage
     storage = optuna.storages.RDBStorage(

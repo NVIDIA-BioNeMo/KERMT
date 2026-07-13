@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
-from torch.distributed import init_process_group, destroy_process_group
+from torch.distributed import destroy_process_group
 import os
 import signal
 import threading
@@ -129,6 +129,7 @@ from kermt.data.kermtdataset import (
     KermtVocabPreTokenizedCollator
 )
 from kermt.util.utils import create_logger
+from kermt.util.ddp_utils import configure_nccl_for_topology, ddp_setup
 from kermt.model.models import KERMTEmbedding
 from task.kermttrainer import KERMTTrainer, KERMTCMIMTrainer, KERMTHybridTrainer
 from kermt.util.scheduler import NoamLR
@@ -140,54 +141,6 @@ from kermt.util.nn_utils import param_count_trainable, param_count_total
 def pre_load_data_ddp(dataset: BatchMolDataset, dataset_size: int, samples_per_file: int):
     for i in range(1, dataset_size, samples_per_file):
         dataset.load_data(i)
-
-def configure_nccl_for_topology():
-    """
-    Auto-configure NCCL settings based on GPU topology.
-    This handles cases where P2P (peer-to-peer) GPU communication is not available.
-    Must be called BEFORE spawning processes (in main process).
-    """
-    # Check if user has already set NCCL settings (don't override)
-    if "NCCL_P2P_DISABLE" in os.environ:
-        print(f"[INFO] Using user-provided NCCL settings: NCCL_P2P_DISABLE={os.environ['NCCL_P2P_DISABLE']}")
-        return
-    
-    # Try to detect GPU topology
-    try:
-        import subprocess
-        result = subprocess.run(['nvidia-smi', 'topo', '-m'], 
-                              capture_output=True, text=True, timeout=5)
-        topo_output = result.stdout
-        
-        # Check for poor GPU connectivity (SYS or NODE topology)
-        # These topologies typically don't support P2P well
-        if 'SYS' in topo_output or 'NODE' in topo_output:
-            print("[INFO] Detected cross-NUMA or system-level GPU topology (SYS/NODE).")
-            print("[INFO] Disabling P2P for stability. This is normal for multi-socket systems.")
-            os.environ["NCCL_P2P_DISABLE"] = "1"
-            os.environ["NCCL_IB_DISABLE"] = "1"
-            os.environ["NCCL_SHM_DISABLE"] = "0"
-        else:
-            print("[INFO] GPU topology appears to support P2P. Enabling P2P communication.")
-    except Exception as e:
-        # If detection fails, use safe defaults (disable P2P)
-        print(f"[WARNING] Could not detect GPU topology: {e}")
-        print("[INFO] Using safe default: P2P disabled. Set NCCL_P2P_DISABLE=0 to enable if your system supports it.")
-        os.environ["NCCL_P2P_DISABLE"] = "1"
-        os.environ["NCCL_IB_DISABLE"] = "1"
-        os.environ["NCCL_SHM_DISABLE"] = "0"
-
-def ddp_setup(rank, world_size):
-    """
-    Args:
-        rank: Unique identifier of each process
-        world_size: Total number of processes
-    """
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-    torch.cuda.set_device(rank)
-    init_process_group(backend="nccl", rank=rank, world_size=world_size)
-
 
 def main(rank: int, world_size: int):
     ddp_setup(rank, world_size)

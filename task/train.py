@@ -54,8 +54,11 @@ try:
 except ImportError:
     wandb = None
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 
 from kermt.data import MolCollator
@@ -73,7 +76,7 @@ from task.predict import predict, evaluate, evaluate_predictions
 
 def train(epoch, model, data, loss_func, mtl_loss, optimizer, scheduler,
           shared_dict, args: Namespace, n_iter: int = 0,
-          logger: logging.Logger = None):
+          logger: logging.Logger = None, world_size: int = 1):
     """
     Trains a model for an epoch.
 
@@ -123,13 +126,27 @@ def train(epoch, model, data, loss_func, mtl_loss, optimizer, scheduler,
         loss = loss_func(preds, targets) * class_weights * mask
 
         if mtl_loss is not None:
-            # Compute per-task mean losses, handling division by zero for tasks with no valid samples
+            # Per-task mean loss. Under DDP the normalization must use the GLOBAL per-task
+            # valid-label count, not each rank's local count: DDP averages the per-rank
+            # gradients (1/world_size), so dividing by a local count weights ranks equally
+            # rather than per-label and systematically down-weights tasks whose labels land on
+            # only a subset of ranks. So all-reduce the count (not the loss sum, which stays
+            # local so each rank differentiates only its own samples), then scale by world_size
+            # to cancel DDP's 1/world_size average -> the net normalization is the true global
+            # per-label mean, matching a single-GPU run. Reduces to the old local mean when
+            # world_size == 1 or per-rank counts are equal.
             task_mask_sum = mask.sum(axis=0)
+            if world_size > 1 and dist.is_initialized():
+                dist.all_reduce(task_mask_sum, op=dist.ReduceOp.SUM)
             task_mask_sum = torch.clamp(task_mask_sum, min=1.0)  # Avoid division by zero
-            task_losses = loss.sum(axis=0) / task_mask_sum
+            task_losses = world_size * loss.sum(axis=0) / task_mask_sum
             loss = mtl_loss(task_losses)
         else:
-            loss = loss.sum() / mask.sum()
+            # Same global-count normalization for the single pooled loss (see the MTL branch).
+            mask_sum = mask.sum()
+            if world_size > 1 and dist.is_initialized():
+                dist.all_reduce(mask_sum, op=dist.ReduceOp.SUM)
+            loss = world_size * loss.sum() / torch.clamp(mask_sum, min=1.0)
 
         loss_sum += loss.item()
         iter_count += args.batch_size
@@ -138,6 +155,17 @@ def train(epoch, model, data, loss_func, mtl_loss, optimizer, scheduler,
         cum_iter_count += 1
 
         loss.backward()
+
+        # Under DDP, the model's gradients are all-reduced automatically by the
+        # DDP wrapper. mtl_loss is a separate module (not DDP-wrapped) whose
+        # log_sigma is registered in the optimizer, so its gradient must be
+        # averaged across ranks manually to keep the learned task weights in sync.
+        if world_size > 1 and mtl_loss is not None and dist.is_initialized():
+            for p in mtl_loss.parameters():
+                if p.grad is not None:
+                    dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
+                    p.grad /= world_size
+
         optimizer.step()
 
         if isinstance(scheduler, NoamLR):
@@ -157,26 +185,40 @@ def train(epoch, model, data, loss_func, mtl_loss, optimizer, scheduler,
     return n_iter, cum_loss_sum / cum_iter_count
 
 
-def run_training(args: Namespace, logger: Logger = None, return_val=False) -> List[float]:
+def run_training(args: Namespace, logger: Logger = None, return_val=False,
+                 rank: int = 0, world_size: int = 1) -> List[float]:
     """
     Trains a model and returns test scores on the model checkpoint with the highest validation score.
 
     :param args: Arguments.
     :param logger: Logger.
+    :param rank: DDP process rank (0 for single-process / non-DDP runs).
+    :param world_size: number of DDP processes (1 for non-DDP runs).
     :return: A list of ensemble scores for each task.
     """
-    if logger is not None:
+    # DDP is active only when a process group has been initialized (i.e. launched
+    # with WORLD_SIZE>1 via `main.py finetune`, which spawns one process per GPU).
+    # `python main.py finetune ...` without WORLD_SIZE keeps world_size=1,
+    # is_distributed=False, and behaves exactly as before.
+    is_distributed = dist.is_available() and dist.is_initialized()
+    is_main = (rank == 0)
+
+    if logger is not None and is_main:
         debug, info = logger.debug, logger.info
     else:
-        debug = info = print
+        # Non-rank-0 processes stay silent; single-process runs without a logger print.
+        debug = info = (print if is_main else (lambda *a, **k: None))
 
 
-    # pin GPU to local rank.
-    idx = args.gpu
-    if args.gpu is not None:
-        torch.cuda.set_device(idx)
+    # pin GPU. Under DDP the device was already pinned to `rank` in ddp_setup;
+    # only honor args.gpu for single-process runs.
+    if not is_distributed and args.gpu is not None:
+        torch.cuda.set_device(args.gpu)
 
     features_scaler, scaler, shared_dict, test_data, train_data, val_data = load_data(args, debug, logger)
+
+    # Default return value; overwritten with real scores on rank 0 after test eval.
+    ensemble_scores = [float('nan')] * args.num_tasks
 
     metric_func = get_metric_func(metric=args.metric)
 
@@ -192,8 +234,8 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
         save_dir = os.path.join(args.save_dir, f'model_{model_idx}')
         makedirs(save_dir)
         
-        # Initialize TensorBoard writer if enabled
-        if args.tensorboard:
+        # Initialize TensorBoard writer if enabled (rank 0 only under DDP)
+        if args.tensorboard and is_main:
             writer = SummaryWriter(save_dir)
 
         # Load/build model
@@ -246,10 +288,12 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
                 print("Starting fresh finetuning from epoch 0.")
 
         # Ensure that model is saved in correct location for evaluation if 0 epochs
-        save_checkpoint(os.path.join(save_dir, 'model.pt'), model, scaler, features_scaler, args)
+        if is_main:
+            save_checkpoint(os.path.join(save_dir, 'model.pt'), model, scaler, features_scaler, args)
 
-        # Learning rate schedulers
-        scheduler = build_lr_scheduler(optimizer, args)
+        # Learning rate schedulers. Pass world_size so steps-per-epoch accounts
+        # for the DistributedSampler sharding the data across ranks.
+        scheduler = build_lr_scheduler(optimizer, args, world_size=world_size)
         # Only load scheduler state if we're resuming (start_epoch > 0 means optimizer loaded successfully)
         if start_epoch > 0 and "scheduler" in loaded_ckpt_state:
             try:
@@ -259,17 +303,45 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
                 print(f"Could not load scheduler state: {e}")
                 print("Starting with fresh scheduler state.")
 
-        # Bulid data_loader
+        # Wrap in DDP for data-parallel training (optimizer was built on the
+        # unwrapped model above, so its encoder/FFN param-group split is intact).
+        # find_unused_parameters=True: the finetune model can carry parameters
+        # not exercised by every forward (e.g. encoder sub-paths / heads retained
+        # from the loaded pretrain checkpoint that the FFN task head does not use).
+        # DDP would otherwise error ("expected to have finished reduction ...").
+        if is_distributed:
+            model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+        # Unwrapped handle for eval and checkpoint saving (portable, non-DDP state dict).
+        core_model = model.module if is_distributed else model
+
+        # Build data_loader. Under DDP, a DistributedSampler shards the train set
+        # across ranks and owns the shuffling (loader shuffle must be False).
         shuffle = True
         mol_collator = MolCollator(shared_dict={}, args=args)
-        # Use a separate name so train_data stays the underlying dataset across
-        # ensemble iterations; reassigning it would double-wrap the DataLoader
-        # (DataLoader(DataLoader(...))) on the second and later ensemble models.
-        train_loader = DataLoader(train_data,
-                                  batch_size=args.batch_size,
-                                  shuffle=shuffle,
-                                  num_workers=0,
-                                  collate_fn=mol_collator)
+        # Use a separate name (train_loader) so train_data stays the underlying
+        # dataset across ensemble iterations; reassigning it would double-wrap
+        # the DataLoader (DataLoader(DataLoader(...))) on later ensemble models.
+        if is_distributed:
+            train_sampler = DistributedSampler(train_data, num_replicas=world_size,
+                                               rank=rank, shuffle=True)
+            # drop_last=False: DistributedSampler pads to an equal sample count per rank, so
+            # every rank has the same number of batches and DDP stays in sync without dropping
+            # data. drop_last=True would discard up to world_size*(batch_size-1) samples -- a
+            # large fraction for small finetune sets on many GPUs -- and diverge from single-GPU.
+            train_loader = DataLoader(train_data,
+                                      batch_size=args.batch_size,
+                                      shuffle=False,
+                                      num_workers=0,
+                                      collate_fn=mol_collator,
+                                      sampler=train_sampler,
+                                      drop_last=False)
+        else:
+            train_sampler = None
+            train_loader = DataLoader(train_data,
+                                      batch_size=args.batch_size,
+                                      shuffle=shuffle,
+                                      num_workers=0,
+                                      collate_fn=mol_collator)
         # Run training
         if args.task_wise_checkpoint:
             best_score = {task: float('inf') if args.minimize_score else -float('inf') for task in args.task_names}
@@ -286,6 +358,9 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
             min_val_loss = float('inf')
         for epoch in range(start_epoch, args.epochs):
             s_time = time.time()
+            # Reshuffle the sharded train data differently each epoch (DDP).
+            if is_distributed:
+                train_sampler.set_epoch(epoch)
             n_iter, train_loss = train(
                 epoch=epoch,
                 model=model,
@@ -297,23 +372,37 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
                 args=args,
                 n_iter=n_iter,
                 shared_dict=shared_dict,
-                logger=logger
+                logger=logger,
+                world_size=world_size
             )
             t_time = time.time() - s_time
             s_time = time.time()
-            val_scores, val_loss = evaluate(
-                model=model,
-                data=val_data,
-                loss_func=loss_func,
-                num_tasks=args.num_tasks,
-                metric_func=metric_func,
-                batch_size=args.batch_size,
-                dataset_type=args.dataset_type,
-                scaler=scaler,
-                shared_dict=shared_dict,
-                logger=logger,
-                args=args
-            )
+            # Evaluate on the unwrapped model over the FULL val set. Under DDP, only rank 0
+            # scores (evaluate() runs a plain, non-DDP forward on core_model, so it involves no
+            # collectives and is safe to run on a single rank) -- this avoids every rank
+            # redundantly scoring the whole val set, which is wasteful for large val sets. The
+            # scores are then broadcast so every rank makes the same best-model / early-stop
+            # decisions; only rank 0 writes checkpoints.
+            if is_main:
+                val_scores, val_loss = evaluate(
+                    model=core_model,
+                    data=val_data,
+                    loss_func=loss_func,
+                    num_tasks=args.num_tasks,
+                    metric_func=metric_func,
+                    batch_size=args.batch_size,
+                    dataset_type=args.dataset_type,
+                    scaler=scaler,
+                    shared_dict=shared_dict,
+                    logger=logger,
+                    args=args
+                )
+            else:
+                val_scores, val_loss = None, None
+            if is_distributed:
+                payload = [val_scores, val_loss]
+                dist.broadcast_object_list(payload, src=0, device=torch.device(f"cuda:{rank}"))
+                val_scores, val_loss = payload
             avg_val_loss = np.nanmean(val_loss)
             v_time = time.time() - s_time
             # Average validation score
@@ -326,15 +415,16 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
                 # Individual validation scores
                 for task_name, val_score in zip(args.task_names, val_scores):
                     debug(f'Validation {task_name} {args.metric} = {val_score:.6f}')
-            print('Epoch: {:04d}'.format(epoch),
-                  'loss_train: {:.6f}'.format(train_loss),
-                  'loss_val: {:.6f}'.format(avg_val_loss),
-                  f'{args.metric}_val: {avg_val_score:.4f}',
-                  'cur_lr: {:.5f}'.format(scheduler.get_lr()[-1]),
-                  't_time: {:.4f}s'.format(t_time),
-                  'v_time: {:.4f}s'.format(v_time),
-                  flush=True)
-            if args.wandb_project:
+            if is_main:
+                print('Epoch: {:04d}'.format(epoch),
+                      'loss_train: {:.6f}'.format(train_loss),
+                      'loss_val: {:.6f}'.format(avg_val_loss),
+                      f'{args.metric}_val: {avg_val_score:.4f}',
+                      'cur_lr: {:.5f}'.format(scheduler.get_lr()[-1]),
+                      't_time: {:.4f}s'.format(t_time),
+                      'v_time: {:.4f}s'.format(v_time),
+                      flush=True)
+            if args.wandb_project and is_main:
                 log_dict = {
                     "epoch": epoch,
                     "train/loss": train_loss,
@@ -349,7 +439,7 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
                         log_dict[f"val/{task_name}_{args.metric}"] = val_score
                 wandb.log(log_dict)
 
-            if args.tensorboard:
+            if args.tensorboard and is_main:
                 writer.add_scalar('loss/train', train_loss, epoch)
                 writer.add_scalar('loss/val', avg_val_loss, epoch)
                 writer.add_scalar(f'{args.metric}_val', avg_val_score, epoch)
@@ -370,38 +460,53 @@ def run_training(args: Namespace, logger: Logger = None, return_val=False) -> Li
                 else:
                     curr_epoch_best_by_loss = False
 
-            save_model_for_restart(os.path.join(save_dir, 'last_checkpoint.pt'), model, optimizer, scheduler, scaler, features_scaler, args, 
-            epoch+1 # save with +1 so that loaded checkpoint will start from the next epoch
-            )
-            # Save model checkpoint if improved validation score
+            if is_main:
+                save_model_for_restart(os.path.join(save_dir, 'last_checkpoint.pt'), core_model, optimizer, scheduler, scaler, features_scaler, args,
+                epoch+1 # save with +1 so that loaded checkpoint will start from the next epoch
+                )
+            # Save model checkpoint if improved validation score.
+            # Best-score tracking runs on all ranks (identical val metrics keep it
+            # in sync); only rank 0 writes the checkpoint files (using core_model,
+            # the unwrapped module, so the saved state dict is DDP-agnostic).
             if args.task_wise_checkpoint:
                 if args.select_by_loss:
                     for task_name in args.task_names:
-                        if curr_epoch_best_by_loss[task_name]:
+                        if curr_epoch_best_by_loss[task_name] and is_main:
                             print(f"Saving model {task_name} at epoch {epoch} with validation loss {min_val_loss[task_name]:.4f}")
-                            save_checkpoint(os.path.join(save_dir, f'model_{task_name}.pt'), model, scaler, features_scaler, args)
+                            save_checkpoint(os.path.join(save_dir, f'model_{task_name}.pt'), core_model, scaler, features_scaler, args)
                 else:
                     for itask, task_name in enumerate(args.task_names):
                         task_val_score = val_scores[itask] if itask < len(val_scores) else avg_val_score
                         if args.minimize_score and task_val_score < best_score[task_name] or \
                                 not args.minimize_score and task_val_score > best_score[task_name]:
                             best_score[task_name], best_epoch[task_name] = task_val_score, epoch
-                            print(f"Saving model {task_name} at epoch {epoch} with validation score {best_score[task_name]:.4f}")
-                            save_checkpoint(os.path.join(save_dir, f'model_{task_name}.pt'), model, scaler, features_scaler, args)
+                            if is_main:
+                                print(f"Saving model {task_name} at epoch {epoch} with validation score {best_score[task_name]:.4f}")
+                                save_checkpoint(os.path.join(save_dir, f'model_{task_name}.pt'), core_model, scaler, features_scaler, args)
             else:
                 if args.select_by_loss:
-                    if curr_epoch_best_by_loss:
+                    if curr_epoch_best_by_loss and is_main:
                         print(f"Saving model at epoch {epoch} with validation loss {min_val_loss:.4f}")
-                        save_checkpoint(os.path.join(save_dir, 'model.pt'), model, scaler, features_scaler, args)
+                        save_checkpoint(os.path.join(save_dir, 'model.pt'), core_model, scaler, features_scaler, args)
                 else:
                     if args.minimize_score and avg_val_score < best_score or \
                             not args.minimize_score and avg_val_score > best_score:
                         best_score, best_epoch = avg_val_score, epoch
-                        print(f"Saving model at epoch {epoch} with validation score {best_score:.4f}")
-                        save_checkpoint(os.path.join(save_dir, 'model.pt'), model, scaler, features_scaler, args)
+                        if is_main:
+                            print(f"Saving model at epoch {epoch} with validation score {best_score:.4f}")
+                            save_checkpoint(os.path.join(save_dir, 'model.pt'), core_model, scaler, features_scaler, args)
             # TODO: Reimplement this
             # if epoch - best_epoch > args.early_stop_epoch:
             #     break
+
+        # Test-set evaluation + result writing happen on rank 0 only. All ranks
+        # synchronize first; non-zero ranks then skip to the next ensemble member
+        # (or fall out of the loop). Model weights are identical across ranks, so
+        # rank 0's test scores are representative.
+        if is_distributed:
+            dist.barrier()
+        if not is_main:
+            continue
 
         ensemble_scores = 0.0
 
