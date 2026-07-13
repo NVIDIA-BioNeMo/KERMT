@@ -86,6 +86,9 @@ def add_predict_args(parser: ArgumentParser):
     parser.add_argument('--features_generator', type=str, nargs='*',
                         choices=get_available_features_generators(),
                         help='Method of generating additional features')
+    parser.add_argument('--rdkit2D_normalization_type', type=str, choices=("fast", "best", "descriptastorus"), default='fast',
+                        help='Type of normalization for rdkit2D features. Choices: fast, best, descriptastorus. '
+                             'Must match the value used at finetune time (it is baked into the features).')
     parser.add_argument('--features_path', type=str, nargs='*',
                         help='Path to features to use in FNN (instead of features_generator)')
     parser.add_argument('--use_cuikmolmaker_featurization', action='store_true', default=False,
