@@ -215,7 +215,13 @@ class KERMTTrainer:
 
         self.model.to(self.gpu_id)
 
-        self.model = DDP(self.model, device_ids=[gpu_id])
+        # find_unused_parameters is required when embedding_output_type != 'both':
+        # in atom/bond mode the encoder produces only one aggregation level, so the
+        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
+        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
+        self.model = DDP(self.model, device_ids=[gpu_id],
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)
@@ -564,7 +570,13 @@ class KERMTCMIMTrainer:
         self.n_iter = 0
 
         self.model.to(self.gpu_id)
-        self.model = DDP(self.model, device_ids=[gpu_id])
+        # find_unused_parameters is required when embedding_output_type != 'both':
+        # in atom/bond mode the encoder produces only one aggregation level, so the
+        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
+        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
+        self.model = DDP(self.model, device_ids=[gpu_id],
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)
@@ -871,7 +883,13 @@ class KERMTHybridTrainer:
         self.n_iter = 0
 
         self.model.to(self.gpu_id)
-        self.model = DDP(self.model, device_ids=[gpu_id])
+        # find_unused_parameters is required when embedding_output_type != 'both':
+        # in atom/bond mode the encoder produces only one aggregation level, so the
+        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
+        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
+        self.model = DDP(self.model, device_ids=[gpu_id],
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)
