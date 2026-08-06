@@ -183,6 +183,25 @@ def make_predictions(args: Namespace, newest_train_args=None, smiles: List[str] 
     args.num_tasks = test_data.num_tasks()
     args.features_size = test_data.features_size()
 
+    # features_size is not a model arg, so it is recomputed from the prediction data
+    # rather than inherited from the checkpoint. If it disagrees with what the model was
+    # finetuned on, the FFN input layer has the wrong width. Catch it here: the loader
+    # would otherwise report a bare tensor-shape mismatch that does not say which input
+    # is missing, and before the strict loader was restored it silently dropped that
+    # layer and predicted from its random initialization.
+    ckpt_features_size = getattr(train_args, 'features_size', None)
+    if ckpt_features_size is not None and args.features_size != ckpt_features_size:
+        ckpt_generator = getattr(train_args, 'features_generator', None)
+        hint = (f'pass the same features with --features_path, or regenerate them with '
+                f'--features_generator {" ".join(ckpt_generator)}'
+                if ckpt_generator else
+                'the checkpoint was finetuned without additional features, so do not pass '
+                '--features_path or --features_generator')
+        raise ValueError(
+            f'Feature size mismatch: the checkpoint was finetuned with features_size='
+            f'{ckpt_features_size} but the prediction data has features_size='
+            f'{args.features_size}. To predict with this checkpoint, {hint}.')
+
     print('Validating SMILES')
     # Drop empty / unparseable / zero-heavy-atom SMILES before featurization —
     # MolGraph raises on invalid input, so leaving them in aborts the whole run.

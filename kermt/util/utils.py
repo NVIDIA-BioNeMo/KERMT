@@ -877,11 +877,22 @@ def load_checkpoint_for_prediction(path: str,
     # Check for consistency between finetune and predict arguments
     # ensuring that the model is used exactly how it was finetuned.
     finetune_predict_consistency_args = get_finetune_predict_consistency_args()
+    # features_generator describes how to build features on the fly. When the caller
+    # supplies precomputed features with --features_path it is unused -- MoleculeDatapoint
+    # refuses to accept both -- so requiring it to equal the finetune value would reject
+    # the normal inference workflow, which featurizes ahead of time and passes an .npz.
+    supplied_features = getattr(current_args, 'features_path', None)
     for key, value in vars(current_args).items():
-        if key in finetune_predict_consistency_args:
-            if value != vars(loaded_args)[key]:
-                raise ValueError(f'Argument {key} is not consistent between finetune and predict. '
-                                 f'Finetune value: {value}, Predict value: {vars(loaded_args)[key]}')
+        if key not in finetune_predict_consistency_args:
+            continue
+        if key == 'features_generator' and supplied_features:
+            continue
+        if key not in vars(loaded_args):
+            # Checkpoint predates the argument; nothing to be inconsistent with.
+            continue
+        if value != vars(loaded_args)[key]:
+            raise ValueError(f'Argument {key} is not consistent between finetune and predict. '
+                             f'Finetune value: {vars(loaded_args)[key]}, Predict value: {value}')
 
     model_related_args = get_model_args()
     for key, value in vars(loaded_args).items():
