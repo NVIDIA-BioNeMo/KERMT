@@ -52,7 +52,7 @@ from kermt.data import MolCollator
 from kermt.data import MoleculeDataset
 from kermt.data import StandardScaler
 from kermt.util.utils import get_data, get_data_from_smiles, create_logger, load_args, get_task_names, tqdm, \
-    load_checkpoint, load_scalars
+    load_checkpoint_for_prediction, load_scalars
 
 
 def predict(model: nn.Module,
@@ -222,7 +222,7 @@ def make_predictions(args: Namespace, newest_train_args=None, smiles: List[str] 
     count = 0
     for checkpoint_path in tqdm(args.checkpoint_paths, total=len(args.checkpoint_paths)):
         # Load model
-        model, _ = load_checkpoint(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
+        model = load_checkpoint_for_prediction(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
         model_preds, _ = predict(
             model=model,
             data=test_data,
