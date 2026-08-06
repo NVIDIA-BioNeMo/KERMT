@@ -97,7 +97,7 @@ def run_evaluation(args: Namespace, logger: Logger = None) -> List[float]:
             if "fold_%d" % cur_model in path:
                 target_path = path
         debug(f'Loading model {args.seed} from {target_path}')
-        model = load_checkpoint(target_path, current_args=args, cuda=args.cuda, logger=logger)
+        model, _ = load_checkpoint(target_path, current_args=args, cuda=args.cuda, logger=logger)
         # Get loss and metric functions
         loss_func = get_loss_func(args, model)
 

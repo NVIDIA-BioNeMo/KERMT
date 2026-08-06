@@ -109,7 +109,7 @@ def generate_fingerprints(args: Namespace, logger: Logger = None) -> List[List[f
     logger.info(f'Total size = {len(test_data):,}')
     logger.info(f'Generating...')
     # Load model
-    model = load_checkpoint(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
+    model, _ = load_checkpoint(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
     model_preds = do_generate(
         model=model,
         data=test_data,
