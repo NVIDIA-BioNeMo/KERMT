@@ -82,16 +82,16 @@ def predict(model: nn.Module,
     # permanently disable bond dropout for all later training epochs -- and under
     # DDP, where only rank 0 evaluates, desync augmentation across ranks. Use a
     # shallow copy so the override is local to this call. See issue #22.
-    args = copy.copy(args)
-    args.bond_drop_rate = 0
+    args_copy = copy.copy(args)
+    args_copy.bond_drop_rate = 0
     preds = []
 
     # num_iters, iter_step = len(data), batch_size
-    num_tasks = args.num_tasks
+    num_tasks = args_copy.num_tasks
     loss_sum = np.zeros(num_tasks, dtype=np.float32)
     iter_count = 0
 
-    mol_collator = MolCollator(args=args, shared_dict=shared_dict)
+    mol_collator = MolCollator(args=args_copy, shared_dict=shared_dict)
     # mol_dataset = MoleculeDataset(data)
 
     num_workers = 0
@@ -107,12 +107,12 @@ def predict(model: nn.Module,
         with torch.no_grad():
             batch_preds = model(batch, features_batch)
             iter_count += 1
-            if args.fingerprint:
+            if args_copy.fingerprint:
                 preds.extend(batch_preds.data.cpu().numpy())
                 continue
 
             if loss_func is not None:
-                if args.dataset_type == 'classification':
+                if args_copy.dataset_type == 'classification':
                     # In eval the model already applies sigmoid to classification
                     # outputs, so batch_preds are probabilities. loss_func is
                     # BCEWithLogitsLoss, which would sigmoid a second time. Score

@@ -66,11 +66,11 @@ def do_generate(model: nn.Module,
     model.eval()
     # Disable bond dropout locally without mutating the shared args (same pattern
     # as predict(); see issue #22).
-    args = copy.copy(args)
-    args.bond_drop_rate = 0
+    args_copy = copy.copy(args)
+    args_copy.bond_drop_rate = 0
     preds = []
 
-    mol_collator = MolCollator(args=args, shared_dict={})
+    mol_collator = MolCollator(args=args_copy, shared_dict={})
 
     num_workers = 0
     mol_loader = DataLoader(data,
