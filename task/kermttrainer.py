@@ -215,7 +215,13 @@ class KERMTTrainer:
 
         self.model.to(self.gpu_id)
 
-        self.model = DDP(self.model, device_ids=[gpu_id])
+        # find_unused_parameters is required when embedding_output_type != 'both':
+        # in atom/bond mode the encoder produces only one aggregation level, so the
+        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
+        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
+        self.model = DDP(self.model, device_ids=[gpu_id],
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)
@@ -270,9 +276,9 @@ class KERMTTrainer:
             loss_sum += loss.item()
             iter_count += self.args.batch_size
 
-            av_loss_sum += av_loss.item()
-            bv_loss_sum += bv_loss.item()
-            fg_loss_sum += fg_loss.item()
+            av_loss_sum += av_loss.item() if not isinstance(av_loss, float) else av_loss
+            bv_loss_sum += bv_loss.item() if not isinstance(bv_loss, float) else bv_loss
+            fg_loss_sum += fg_loss.item() if not isinstance(fg_loss, float) else fg_loss
             av_dist_loss_sum += av_dist_loss.item() if type(av_dist_loss) != float else av_dist_loss
             bv_dist_loss_sum += bv_dist_loss.item() if type(bv_dist_loss) != float else bv_dist_loss
             fg_dist_loss_sum += fg_dist_loss.item() if type(fg_dist_loss) != float else fg_dist_loss
@@ -395,13 +401,13 @@ class KERMTTrainer:
                 self.scheduler.step()
             else:
                 # For eval model, only consider the loss of three task.
-                cum_loss_sum += av_loss.item()
-                cum_loss_sum += bv_loss.item()
-                cum_loss_sum += fg_loss.item()
+                cum_loss_sum += av_loss.item() if not isinstance(av_loss, float) else av_loss
+                cum_loss_sum += bv_loss.item() if not isinstance(bv_loss, float) else bv_loss
+                cum_loss_sum += fg_loss.item() if not isinstance(fg_loss, float) else fg_loss
 
-            av_loss_sum += av_loss.item()
-            bv_loss_sum += bv_loss.item()
-            fg_loss_sum += fg_loss.item()
+            av_loss_sum += av_loss.item() if not isinstance(av_loss, float) else av_loss
+            bv_loss_sum += bv_loss.item() if not isinstance(bv_loss, float) else bv_loss
+            fg_loss_sum += fg_loss.item() if not isinstance(fg_loss, float) else fg_loss
             av_dist_loss_sum += av_dist_loss.item() if type(av_dist_loss) != float else av_dist_loss
             bv_dist_loss_sum += bv_dist_loss.item() if type(bv_dist_loss) != float else bv_dist_loss
             fg_dist_loss_sum += fg_dist_loss.item() if type(fg_dist_loss) != float else fg_dist_loss
@@ -432,12 +438,12 @@ class KERMTTrainer:
             if self.gpu_id == 0 and self.n_steps % train_log_interval == 0:
                 train_metrics = {
                     'train/loss': loss.item(),
-                    'train/av_loss': av_loss.item(),
-                    'train/bv_loss': bv_loss.item(),
-                    'train/fg_loss': fg_loss.item(),
-                    'train/av_dist_loss': av_dist_loss.item(),
-                    'train/bv_dist_loss': bv_dist_loss.item(),
-                    'train/fg_dist_loss': fg_dist_loss.item(),
+                    'train/av_loss': av_loss.item() if not isinstance(av_loss, float) else av_loss,
+                    'train/bv_loss': bv_loss.item() if not isinstance(bv_loss, float) else bv_loss,
+                    'train/fg_loss': fg_loss.item() if not isinstance(fg_loss, float) else fg_loss,
+                    'train/av_dist_loss': av_dist_loss.item() if not isinstance(av_dist_loss, float) else av_dist_loss,
+                    'train/bv_dist_loss': bv_dist_loss.item() if not isinstance(bv_dist_loss, float) else bv_dist_loss,
+                    'train/fg_dist_loss': fg_dist_loss.item() if not isinstance(fg_dist_loss, float) else fg_dist_loss,
                     'train/lr': self.scheduler.get_lr()[0],
                     'train/epoch': epoch,
                     'train/batch_idx': ibatch + self.batch_idx_offset,
@@ -564,7 +570,13 @@ class KERMTCMIMTrainer:
         self.n_iter = 0
 
         self.model.to(self.gpu_id)
-        self.model = DDP(self.model, device_ids=[gpu_id])
+        # find_unused_parameters is required when embedding_output_type != 'both':
+        # in atom/bond mode the encoder produces only one aggregation level, so the
+        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
+        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
+        self.model = DDP(self.model, device_ids=[gpu_id],
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)
@@ -871,7 +883,13 @@ class KERMTHybridTrainer:
         self.n_iter = 0
 
         self.model.to(self.gpu_id)
-        self.model = DDP(self.model, device_ids=[gpu_id])
+        # find_unused_parameters is required when embedding_output_type != 'both':
+        # in atom/bond mode the encoder produces only one aggregation level, so the
+        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
+        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
+        self.model = DDP(self.model, device_ids=[gpu_id],
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)

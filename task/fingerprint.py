@@ -37,6 +37,7 @@
 """
 The fingerprint generation function.
 """
+import copy
 from argparse import Namespace
 from logging import Logger
 from typing import List
@@ -63,10 +64,13 @@ def do_generate(model: nn.Module,
     :return: A list of fingerprints.
     """
     model.eval()
-    args.bond_drop_rate = 0
+    # Disable bond dropout locally without mutating the shared args (same pattern
+    # as predict(); see issue #22).
+    args_copy = copy.copy(args)
+    args_copy.bond_drop_rate = 0
     preds = []
 
-    mol_collator = MolCollator(args=args, shared_dict={})
+    mol_collator = MolCollator(args=args_copy, shared_dict={})
 
     num_workers = 0
     mol_loader = DataLoader(data,
@@ -105,7 +109,7 @@ def generate_fingerprints(args: Namespace, logger: Logger = None) -> List[List[f
     logger.info(f'Total size = {len(test_data):,}')
     logger.info(f'Generating...')
     # Load model
-    model = load_checkpoint(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
+    model, _ = load_checkpoint(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
     model_preds = do_generate(
         model=model,
         data=test_data,

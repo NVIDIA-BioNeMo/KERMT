@@ -37,6 +37,7 @@
 """
 The predict function using the finetuned model to make the prediction. .
 """
+import copy
 from argparse import Namespace
 from typing import List
 
@@ -51,7 +52,7 @@ from kermt.data import MolCollator
 from kermt.data import MoleculeDataset
 from kermt.data import StandardScaler
 from kermt.util.utils import get_data, get_data_from_smiles, create_logger, load_args, get_task_names, tqdm, \
-    load_checkpoint, load_scalars
+    load_checkpoint_for_prediction, load_scalars
 
 
 def predict(model: nn.Module,
@@ -75,15 +76,22 @@ def predict(model: nn.Module,
     """
     # debug = logger.debug if logger is not None else print
     model.eval()
-    args.bond_drop_rate = 0
+    # Evaluation must not apply bond dropout, but do NOT mutate the shared args:
+    # training and eval reuse one args instance and graphs are rebuilt every epoch
+    # (caching is off by default), so setting args.bond_drop_rate = 0 here would
+    # permanently disable bond dropout for all later training epochs -- and under
+    # DDP, where only rank 0 evaluates, desync augmentation across ranks. Use a
+    # shallow copy so the override is local to this call. See issue #22.
+    args_copy = copy.copy(args)
+    args_copy.bond_drop_rate = 0
     preds = []
 
     # num_iters, iter_step = len(data), batch_size
-    num_tasks = args.num_tasks
+    num_tasks = args_copy.num_tasks
     loss_sum = np.zeros(num_tasks, dtype=np.float32)
     iter_count = 0
 
-    mol_collator = MolCollator(args=args, shared_dict=shared_dict)
+    mol_collator = MolCollator(args=args_copy, shared_dict=shared_dict)
     # mol_dataset = MoleculeDataset(data)
 
     num_workers = 0
@@ -99,12 +107,12 @@ def predict(model: nn.Module,
         with torch.no_grad():
             batch_preds = model(batch, features_batch)
             iter_count += 1
-            if args.fingerprint:
+            if args_copy.fingerprint:
                 preds.extend(batch_preds.data.cpu().numpy())
                 continue
 
             if loss_func is not None:
-                if args.dataset_type == 'classification':
+                if args_copy.dataset_type == 'classification':
                     # In eval the model already applies sigmoid to classification
                     # outputs, so batch_preds are probabilities. loss_func is
                     # BCEWithLogitsLoss, which would sigmoid a second time. Score
@@ -175,6 +183,25 @@ def make_predictions(args: Namespace, newest_train_args=None, smiles: List[str] 
     args.num_tasks = test_data.num_tasks()
     args.features_size = test_data.features_size()
 
+    # features_size is not a model arg, so it is recomputed from the prediction data
+    # rather than inherited from the checkpoint. If it disagrees with what the model was
+    # finetuned on, the FFN input layer has the wrong width. Catch it here: the loader
+    # would otherwise report a bare tensor-shape mismatch that does not say which input
+    # is missing, and before the strict loader was restored it silently dropped that
+    # layer and predicted from its random initialization.
+    ckpt_features_size = getattr(train_args, 'features_size', None)
+    if ckpt_features_size is not None and args.features_size != ckpt_features_size:
+        ckpt_generator = getattr(train_args, 'features_generator', None)
+        hint = (f'pass the same features with --features_path, or regenerate them with '
+                f'--features_generator {" ".join(ckpt_generator)}'
+                if ckpt_generator else
+                'the checkpoint was finetuned without additional features, so do not pass '
+                '--features_path or --features_generator')
+        raise ValueError(
+            f'Feature size mismatch: the checkpoint was finetuned with features_size='
+            f'{ckpt_features_size} but the prediction data has features_size='
+            f'{args.features_size}. To predict with this checkpoint, {hint}.')
+
     print('Validating SMILES')
     # Drop empty / unparseable / zero-heavy-atom SMILES before featurization —
     # MolGraph raises on invalid input, so leaving them in aborts the whole run.
@@ -214,7 +241,7 @@ def make_predictions(args: Namespace, newest_train_args=None, smiles: List[str] 
     count = 0
     for checkpoint_path in tqdm(args.checkpoint_paths, total=len(args.checkpoint_paths)):
         # Load model
-        model, _ = load_checkpoint(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
+        model = load_checkpoint_for_prediction(checkpoint_path, cuda=args.cuda, current_args=args, logger=logger)
         model_preds, _ = predict(
             model=model,
             data=test_data,
