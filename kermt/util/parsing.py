@@ -388,9 +388,12 @@ def add_pretrain_args(parser: ArgumentParser):
     parser.add_argument('--embedding_output_type', type=str, default='both', nargs='?',
                         choices=("atom", "bond", "both"),
                         help="Type of output embeddings from encoder. Options: atom, bond, both")
-    parser.add_argument('--hidden_size', type=float, default=3,
-                        help='Encoder hidden dimension (actual dimension = hidden_size * 100). '
-                             'Default: 3 (→ 300).')
+    parser.add_argument('--hidden_size', type=float, default=800,
+                        help='Encoder hidden dimension. Must be divisible by --num_attn_head. '
+                             'Default: 800, matching the released checkpoints and the '
+                             'finetune parser. (The previous default of 3 came with help text '
+                             'claiming a x100 scaling that was never implemented, so it built '
+                             'a 3-dimensional encoder.)')
     parser.add_argument('--depth', type=int, default=3,
                         help='Number of encoder message passing layers.')
     parser.add_argument('--num_attn_head', type=int, default=4, 
