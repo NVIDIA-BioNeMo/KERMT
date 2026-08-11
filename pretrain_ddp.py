@@ -30,8 +30,11 @@ import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.distributed import destroy_process_group
 import os
+import random
 import signal
 import threading
+
+import numpy as np
 
 # ============================================================================
 # Graceful Shutdown Handling
@@ -142,6 +145,52 @@ def pre_load_data_ddp(dataset: BatchMolDataset, dataset_size: int, samples_per_f
     for i in range(1, dataset_size, samples_per_file):
         dataset.load_data(i)
 
+def setup_seed(seed: int):
+    """
+    Seed every RNG pretraining draws from, so a run is reproducible.
+
+    Mirrors ``setup()`` in main.py, which finetuning has always called. Seeding the
+    RNGs alone is not enough: it leaves cuBLAS/cuDNN free to pick nondeterministic
+    kernels, which on a 2-epoch fixture still moved the validation loss in the
+    fourth decimal. ``use_deterministic_algorithms`` is what closes that gap.
+
+    It is safe to enable here precisely because seeding is opt-in -- a run that
+    passes no ``--seed`` never reaches this function, so the path pretraining has
+    always taken is untouched. ``CUBLAS_WORKSPACE_CONFIG`` must be set before the
+    CUDA context is created, which is why it is handled in ``__main__`` rather than
+    here.
+
+    Every rank is seeded identically. DDP requires identical initial weights
+    anyway, and the ranks see different data because the sampler shards it.
+
+    :param seed: the seed to use.
+    """
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(mode=True)
+
+
+def seed_dataloader_worker(worker_id: int):
+    """
+    Seed numpy and python RNGs inside a DataLoader worker process.
+
+    torch reseeds its own RNG per worker, but not numpy's or python's. The vocab
+    masking (``atom_random_mask`` / ``bond_random_mask``) and the bond dropout in
+    ``MolGraph`` all draw from ``np.random``, so with ``--num_dataloader_workers > 0``
+    those draws would stay unseeded and the run would not reproduce even though
+    the main process was seeded.
+
+    :param worker_id: supplied by the DataLoader; unused, since torch has already
+    folded it into ``torch.initial_seed()``.
+    """
+    worker_seed = torch.initial_seed() % 2 ** 32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
 def main(rank: int, world_size: int):
     ddp_setup(rank, world_size)
     
@@ -151,6 +200,11 @@ def main(rank: int, world_size: int):
 
     # parse args
     args = parse_args_ddp()
+
+    # Opt-in: unset (the default) leaves every RNG untouched, which is how
+    # pretraining has always run.
+    if args.seed is not None:
+        setup_seed(args.seed)
 
     if rank == 0:
         print(f"{args=}")
@@ -533,11 +587,15 @@ def main(rank: int, world_size: int):
             )
             val_collator = mol_collator
 
+    # Only set when seeding is requested, so the unseeded default path is untouched.
+    worker_init_fn = seed_dataloader_worker if args.seed is not None else None
+
     train_dataloader = DataLoader(train_data, batch_size=args.batch_size, # batch size per GPU (aka micro batch size)
                                   shuffle=False, # because train_sampler does the shuffling
                                   num_workers=args.num_dataloader_workers,
                                   sampler=train_sampler,
                                   collate_fn=mol_collator,
+                                  worker_init_fn=worker_init_fn,
                                   drop_last=True)
     
     if args.val_data_path is not None:
@@ -546,6 +604,7 @@ def main(rank: int, world_size: int):
                                   num_workers=args.num_dataloader_workers,
                                   sampler=val_sampler,
                                   collate_fn=val_collator,
+                                  worker_init_fn=worker_init_fn,
                                   drop_last=True)
     else:
         val_dataloader = None
@@ -737,6 +796,13 @@ if __name__ == "__main__":
     world_size = os.environ.get("WORLD_SIZE", 1)
     world_size = int(world_size)
     print(f"World size: {world_size}")
+
+    # setup_seed() enables deterministic algorithms, and cuBLAS requires this to be
+    # set before the CUDA context exists -- so it has to happen here, in the parent,
+    # before mp.spawn. Set unconditionally: it is inert unless deterministic
+    # algorithms are actually switched on, and reading --seed this early would mean
+    # parsing args before the DDP ranks do. An existing value is left alone.
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     
     # Auto-configure NCCL before spawning processes
     # This detects GPU topology and sets appropriate P2P settings

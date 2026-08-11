@@ -323,8 +323,14 @@ def add_pretrain_args(parser: ArgumentParser):
     parser.add_argument('--enable_multi_gpu', dest='enable_multi_gpu',
                         action='store_true', default=False,
                         help='Enable multi-GPU training')
-    parser.add_argument("--seed", type=int, default=0, 
-                        help="Random seed for pretraining.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for pretraining. Unset (the default) leaves every "
+                             "RNG untouched, which is how pretraining has always run -- two "
+                             "runs of the same command give different results. Set it to make "
+                             "a run reproducible: model init, dropout, the dyMPN depth draw, "
+                             "the vocab masking and any bond dropout are all seeded from it. "
+                             "Needed for A/B comparisons, where an unseeded run-to-run spread "
+                             "can otherwise exceed the effect being measured.")
     
     # ========== Data Arguments ==========
     parser.add_argument('--train_data_path', type=str, required=True,
