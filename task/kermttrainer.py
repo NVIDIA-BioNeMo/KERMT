@@ -784,11 +784,15 @@ class KERMTCMIMTrainer:
                     'train/log_p_k1_given_zx': log_p_k1.item(),
                     'train/log_q_z_given_x': log_q_z.item(),
                     'train/log_P_z': log_P_z.item(),
-                    'train/recon_accuracy': recon_accuracy.item(),
                     'train/lr': self.scheduler.get_lr()[0],
                     'train/epoch': epoch,
                     'train/batch_idx': ibatch + self.batch_idx_offset,
                 }
+                # The loss function returns recon_accuracy=None unless --tensorboard is
+                # set (see where it is unpacked above), so this must be guarded exactly
+                # like the accumulation is. Same guard as KERMTHybridTrainer.
+                if recon_accuracy is not None:
+                    train_metrics['train/recon_accuracy'] = recon_accuracy.item()
                 if self.args.tensorboard:
                     for k, v in train_metrics.items():
                         self.writer.add_scalar(k, v, self.n_steps)
