@@ -103,25 +103,48 @@ def atom_random_mask(smiles_batch, atom_vocab, percent=0.15):
     return vocab_label
 
 
-def bond_random_mask(smiles_batch, bond_vocab, percent=0.15):
+def bond_random_mask(smiles_batch, bond_vocab, percent=0.15, rdkit_bond_idx=None):
     """
     Perform random mask operation on bonds for vocabulary prediction.
     Shared by vocab-based collators.
-    
+
+    The bond vocab head is supervised per bond, and the labels are matched to the graph
+    by position alone. This function re-parses the SMILES independently of ``MolGraph``,
+    so when ``--bond_drop_rate > 0`` drops bonds from the graph the two disagree: the
+    label vector is too long and every label after the first dropped bond describes a
+    different bond from the one it lands on.
+
+    ``rdkit_bond_idx`` closes that gap. Labels are collected into a table keyed by RDKit
+    bond index, then gathered in the order the surviving bonds actually appear in the
+    packed batch, so dropped bonds simply do not contribute a label.
+
+    The masking loop below is unchanged, including the order it visits bonds in and the
+    single ``np.random.permutation`` draw per molecule, so a run with no bond dropout
+    produces exactly the labels it produced before -- the gather is the identity in that
+    case.
+
     Args:
         smiles_batch: List of SMILES strings
         bond_vocab: MolVocab instance for bond vocabulary
         percent: Fraction of bonds to mask (default 0.15)
-        
+        rdkit_bond_idx: ``BatchMolGraph.rdkit_bond_idx`` -- packed directed-bond row to
+            global RDKit bond index, two entries per surviving bond. When None the labels
+            are returned in the legacy sequential order, which is only correct if no bond
+            was dropped.
+
     Returns:
-        List of bond vocabulary labels (0 = not masked)
+        List of bond vocabulary labels (0 = not masked), with a leading padding element.
+        One label per surviving undirected bond, matching the rows
+        :class:`BondVocabPrediction` emits.
     """
-    vocab_label = [0]  # Zero padding at start
+    label_by_rdkit_idx = []   # global RDKit bond index -> label
+    sequential_label = []     # legacy order: one label per bond as visited
+
     for smi in smiles_batch:
         mol = Chem.MolFromSmiles(smi)
         nm_atoms = mol.GetNumAtoms()
         nm_bonds = mol.GetNumBonds()
-        mlabel = []
+        mlabel = [0] * nm_bonds
         n_mask = math.ceil(nm_bonds * percent)
         perm = np.random.permutation(nm_bonds)[:n_mask]
         virtual_bond_id = 0
@@ -132,12 +155,23 @@ def bond_random_mask(smiles_batch, bond_vocab, percent=0.15):
                     continue
                 if virtual_bond_id in perm:
                     label = bond_vocab.stoi.get(bond_to_vocab(mol, bond), bond_vocab.other_index)
-                    mlabel.extend([label])
                 else:
-                    mlabel.extend([0])
+                    label = 0
+                # Keyed by RDKit index so it can be gathered against the packed batch;
+                # also appended in visit order for the legacy return.
+                mlabel[bond.GetIdx()] = label
+                sequential_label.append(label)
                 virtual_bond_id += 1
-        vocab_label.extend(mlabel)
-    return vocab_label
+        # extend keeps the per-molecule offsets identical to BatchMolGraph's,
+        # which accumulates mol.GetNumBonds() the same way.
+        label_by_rdkit_idx.extend(mlabel)
+
+    if rdkit_bond_idx is None:
+        return [0] + sequential_label
+
+    # Two entries per surviving bond (one per direction); take one per bond, in packed
+    # order, to match BondVocabPrediction's output rows.
+    return [0] + [label_by_rdkit_idx[gidx] for gidx in rdkit_bond_idx[0::2]]
 
 
 def tokenize_and_pad_smiles(smiles_batch, smiles_vocab, max_seq_len):
@@ -248,17 +282,21 @@ def _build_graph_input(smiles_batch, shared_dict, args, cmm_feature_tensors=None
         cmm_feature_range: Cuik-molmaker feature range (optional)
         
     Returns:
-        BatchMolGraph components
+        (BatchMolGraph components, rdkit_bond_idx). The second element maps each packed
+        directed-bond row to its global RDKit bond index and is what lets the vocab task
+        align its labels to the bonds that survived --bond_drop_rate.
     """
     if args.use_cuikmolmaker_featurization and cmm_feature_tensors is not None:
-        return mol2graph(smiles_batch, shared_dict, args,
-                        cmm_feature_range=cmm_feature_range,
-                        cmm_tensors=cmm_feature_tensors).get_components()
+        batch = mol2graph(smiles_batch, shared_dict, args,
+                          cmm_feature_range=cmm_feature_range,
+                          cmm_tensors=cmm_feature_tensors)
     else:
-        return mol2graph(smiles_batch, shared_dict, args).get_components()
+        batch = mol2graph(smiles_batch, shared_dict, args)
+    return batch.get_components(), batch.rdkit_bond_idx
 
 
-def _generate_vocab_targets(smiles_batch, atom_vocab, bond_vocab, features_list=None, batch=None):
+def _generate_vocab_targets(smiles_batch, atom_vocab, bond_vocab, features_list=None, batch=None,
+                            rdkit_bond_idx=None):
     """
     Generate vocabulary prediction targets.
     Shared by vocab-based collators.
@@ -274,7 +312,8 @@ def _generate_vocab_targets(smiles_batch, atom_vocab, bond_vocab, features_list=
         dict with av_task, bv_task, fg_task tensors
     """
     atom_vocab_label = torch.Tensor(atom_random_mask(smiles_batch, atom_vocab)).long()
-    bond_vocab_label = torch.Tensor(bond_random_mask(smiles_batch, bond_vocab)).long()
+    bond_vocab_label = torch.Tensor(
+        bond_random_mask(smiles_batch, bond_vocab, rdkit_bond_idx=rdkit_bond_idx)).long()
     
     if features_list is not None:
         # Memory-mapped mode: features are pre-computed numpy arrays
@@ -545,9 +584,10 @@ class KermtCollator(object):
         batch, idx = zip(*batch_idx)
         smiles_batch = [d.smiles for d in batch]
         
-        batchgraph = _build_graph_input(smiles_batch, self.shared_dict, self.args,
-                                        self.cmm_feature_tensors, self.cmm_feature_range)
-        targets = _generate_vocab_targets(smiles_batch, self.atom_vocab, self.bond_vocab, batch=batch)
+        batchgraph, rdkit_bond_idx = _build_graph_input(smiles_batch, self.shared_dict, self.args,
+                                                        self.cmm_feature_tensors, self.cmm_feature_range)
+        targets = _generate_vocab_targets(smiles_batch, self.atom_vocab, self.bond_vocab, batch=batch,
+                                          rdkit_bond_idx=rdkit_bond_idx)
         
         return {
             "graph_input": batchgraph,
@@ -576,8 +616,8 @@ class KermtDecoderCollator(object):
         smiles_batch = [d.smiles for d in batch]
         
         # Build graph input
-        batchgraph = _build_graph_input(smiles_batch, self.shared_dict, self.args,
-                                        self.cmm_feature_tensors, self.cmm_feature_range)
+        batchgraph, _ = _build_graph_input(smiles_batch, self.shared_dict, self.args,
+                                           self.cmm_feature_tensors, self.cmm_feature_range)
         
         # Tokenize and prepare decoder sequences
         tokens, lengths, padding_mask = tokenize_and_pad_smiles(
@@ -623,11 +663,12 @@ class KermtHybridCollator(object):
         smiles_batch = [d.smiles for d in batch]
         
         # Build graph input
-        batchgraph = _build_graph_input(smiles_batch, self.shared_dict, self.args,
-                                        self.cmm_feature_tensors, self.cmm_feature_range)
+        batchgraph, rdkit_bond_idx = _build_graph_input(smiles_batch, self.shared_dict, self.args,
+                                                        self.cmm_feature_tensors, self.cmm_feature_range)
         
         # Vocab targets
-        targets = _generate_vocab_targets(smiles_batch, self.atom_vocab, self.bond_vocab, batch=batch)
+        targets = _generate_vocab_targets(smiles_batch, self.atom_vocab, self.bond_vocab, batch=batch,
+                                          rdkit_bond_idx=rdkit_bond_idx)
         
         # Decoder sequences
         tokens, lengths, padding_mask = tokenize_and_pad_smiles(
@@ -833,8 +874,8 @@ class KermtPreTokenizedDecoderCollator(object):
         )
         
         # Build graph input
-        batchgraph = _build_graph_input(smiles_batch, self.shared_dict, self.args,
-                                        self.cmm_feature_tensors, self.cmm_feature_range)
+        batchgraph, _ = _build_graph_input(smiles_batch, self.shared_dict, self.args,
+                                           self.cmm_feature_tensors, self.cmm_feature_range)
         
         # Prepare decoder sequences
         decoder_input, decoder_target = prepare_decoder_sequences(tokens_tensor)
@@ -1074,12 +1115,13 @@ class KermtHybridPreTokenizedCollator(object):
         idx = list(idx)
         
         # Build graph input
-        batchgraph = _build_graph_input(smiles_batch, self.shared_dict, self.args,
-                                        self.cmm_feature_tensors, self.cmm_feature_range)
+        batchgraph, rdkit_bond_idx = _build_graph_input(smiles_batch, self.shared_dict, self.args,
+                                                        self.cmm_feature_tensors, self.cmm_feature_range)
         
         # Vocab targets
         targets = _generate_vocab_targets(smiles_batch, self.atom_vocab, self.bond_vocab,
-                                          features_list=features_list)
+                                          features_list=features_list,
+                                          rdkit_bond_idx=rdkit_bond_idx)
         
         # Pad and prepare decoder sequences
         tokens_tensor, padding_mask = _pad_pretokenized_sequences(
@@ -1125,10 +1167,11 @@ class KermtVocabPreTokenizedCollator(object):
         smiles_batch = list(smiles_batch)
         idx = list(idx)
         
-        batchgraph = _build_graph_input(smiles_batch, self.shared_dict, self.args,
-                                        self.cmm_feature_tensors, self.cmm_feature_range)
+        batchgraph, rdkit_bond_idx = _build_graph_input(smiles_batch, self.shared_dict, self.args,
+                                                        self.cmm_feature_tensors, self.cmm_feature_range)
         targets = _generate_vocab_targets(smiles_batch, self.atom_vocab, self.bond_vocab,
-                                          features_list=features_list)
+                                          features_list=features_list,
+                                          rdkit_bond_idx=rdkit_bond_idx)
         
         return {
             "graph_input": batchgraph,
@@ -1331,10 +1374,11 @@ class KermtVocabFeaturesOnlyCollator(object):
         smiles_batch = list(smiles_batch)
         idx = list(idx)
         
-        batchgraph = _build_graph_input(smiles_batch, self.shared_dict, self.args,
-                                        self.cmm_feature_tensors, self.cmm_feature_range)
+        batchgraph, rdkit_bond_idx = _build_graph_input(smiles_batch, self.shared_dict, self.args,
+                                                        self.cmm_feature_tensors, self.cmm_feature_range)
         targets = _generate_vocab_targets(smiles_batch, self.atom_vocab, self.bond_vocab,
-                                          features_list=features_list)
+                                          features_list=features_list,
+                                          rdkit_bond_idx=rdkit_bond_idx)
         
         return {
             "graph_input": batchgraph,
