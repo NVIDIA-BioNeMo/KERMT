@@ -323,8 +323,16 @@ def add_pretrain_args(parser: ArgumentParser):
     parser.add_argument('--enable_multi_gpu', dest='enable_multi_gpu',
                         action='store_true', default=False,
                         help='Enable multi-GPU training')
-    parser.add_argument("--seed", type=int, default=0, 
-                        help="Random seed for pretraining.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for pretraining. Unset (the default) leaves every "
+                             "RNG untouched, which is how pretraining has always run -- two "
+                             "runs of the same command give different results. Set it to make "
+                             "a run reproducible: model init, dropout, the dyMPN depth draw, "
+                             "the vocab masking and any bond dropout are all seeded from it. "
+                             "Needed for A/B comparisons, where an unseeded run-to-run spread "
+                             "can otherwise exceed the effect being measured. Checkpoints carry "
+                             "no RNG state, so a run resumed from one is not bit-identical to an "
+                             "uninterrupted seeded run.")
     
     # ========== Data Arguments ==========
     parser.add_argument('--train_data_path', type=str, required=True,
@@ -388,9 +396,12 @@ def add_pretrain_args(parser: ArgumentParser):
     parser.add_argument('--embedding_output_type', type=str, default='both', nargs='?',
                         choices=("atom", "bond", "both"),
                         help="Type of output embeddings from encoder. Options: atom, bond, both")
-    parser.add_argument('--hidden_size', type=float, default=3,
-                        help='Encoder hidden dimension (actual dimension = hidden_size * 100). '
-                             'Default: 3 (→ 300).')
+    parser.add_argument('--hidden_size', type=float, default=800,
+                        help='Encoder hidden dimension. Must be divisible by --num_attn_head. '
+                             'Default: 800, matching the released checkpoints and the '
+                             'finetune parser. (The previous default of 3 came with help text '
+                             'claiming a x100 scaling that was never implemented, so it built '
+                             'a 3-dimensional encoder.)')
     parser.add_argument('--depth', type=int, default=3,
                         help='Number of encoder message passing layers.')
     parser.add_argument('--num_attn_head', type=int, default=4, 

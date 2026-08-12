@@ -355,6 +355,12 @@ class BatchMolGraph:
             self.n_bonds += mol_graph.n_bonds
             self.n_rdkit_bonds += mol_graph.n_rdkit_bonds
 
+        # Packed directed-bond row -> global RDKit bond index, two entries per surviving
+        # bond. Already used below to reorder cuik-molmaker features; kept on the batch so
+        # the vocab task can align its per-bond labels to the rows that actually survived
+        # --bond_drop_rate. Note this indexes f_bonds from row 1, since row 0 is padding.
+        self.rdkit_bond_idx = rdkit_bond_idx
+
         # max with 1 to fix a crash in rare case of all single-heavy-atom mols
         self.max_num_bonds = max(1, max(len(in_bonds) for in_bonds in a2b))
 

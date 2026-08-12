@@ -59,6 +59,8 @@ from torch.utils.data import DataLoader
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
+
+from kermt.model.layers import dynamic_depth_can_skip_message_passing
 try:
     import wandb
 except ImportError:
@@ -215,13 +217,19 @@ class KERMTTrainer:
 
         self.model.to(self.gpu_id)
 
-        # find_unused_parameters is required when embedding_output_type != 'both':
-        # in atom/bond mode the encoder produces only one aggregation level, so the
-        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
-        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # find_unused_parameters is required in two cases:
+        #  * embedding_output_type != 'both': in atom/bond mode the encoder produces only
+        #    one aggregation level, so the opposite branch's FFNs and the bond/atom vocab +
+        #    FG heads receive no gradient.
+        #  * a small --depth: the dyMPN depth draw can then land low enough to skip message
+        #    passing entirely, leaving W_h without gradient on that batch. See
+        #    dynamic_depth_can_skip_message_passing().
+        # Neither holds for the usual 'both' + --depth 6, so the flag stays off there and
+        # DDP keeps its fast path.
         # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
         self.model = DDP(self.model, device_ids=[gpu_id],
-                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'
+                                                 or dynamic_depth_can_skip_message_passing(self.args.depth)))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)
@@ -570,13 +578,19 @@ class KERMTCMIMTrainer:
         self.n_iter = 0
 
         self.model.to(self.gpu_id)
-        # find_unused_parameters is required when embedding_output_type != 'both':
-        # in atom/bond mode the encoder produces only one aggregation level, so the
-        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
-        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # find_unused_parameters is required in two cases:
+        #  * embedding_output_type != 'both': in atom/bond mode the encoder produces only
+        #    one aggregation level, so the opposite branch's FFNs and the bond/atom vocab +
+        #    FG heads receive no gradient.
+        #  * a small --depth: the dyMPN depth draw can then land low enough to skip message
+        #    passing entirely, leaving W_h without gradient on that batch. See
+        #    dynamic_depth_can_skip_message_passing().
+        # Neither holds for the usual 'both' + --depth 6, so the flag stays off there and
+        # DDP keeps its fast path.
         # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
         self.model = DDP(self.model, device_ids=[gpu_id],
-                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'
+                                                 or dynamic_depth_can_skip_message_passing(self.args.depth)))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)
@@ -784,11 +798,15 @@ class KERMTCMIMTrainer:
                     'train/log_p_k1_given_zx': log_p_k1.item(),
                     'train/log_q_z_given_x': log_q_z.item(),
                     'train/log_P_z': log_P_z.item(),
-                    'train/recon_accuracy': recon_accuracy.item(),
                     'train/lr': self.scheduler.get_lr()[0],
                     'train/epoch': epoch,
                     'train/batch_idx': ibatch + self.batch_idx_offset,
                 }
+                # The loss function returns recon_accuracy=None unless --tensorboard is
+                # set (see where it is unpacked above), so this must be guarded exactly
+                # like the accumulation is. Same guard as KERMTHybridTrainer.
+                if recon_accuracy is not None:
+                    train_metrics['train/recon_accuracy'] = recon_accuracy.item()
                 if self.args.tensorboard:
                     for k, v in train_metrics.items():
                         self.writer.add_scalar(k, v, self.n_steps)
@@ -883,13 +901,19 @@ class KERMTHybridTrainer:
         self.n_iter = 0
 
         self.model.to(self.gpu_id)
-        # find_unused_parameters is required when embedding_output_type != 'both':
-        # in atom/bond mode the encoder produces only one aggregation level, so the
-        # opposite branch's FFNs and the bond/atom vocab + FG heads receive no gradient.
-        # 'both' exercises every branch, so keep the flag off there to avoid DDP overhead.
+        # find_unused_parameters is required in two cases:
+        #  * embedding_output_type != 'both': in atom/bond mode the encoder produces only
+        #    one aggregation level, so the opposite branch's FFNs and the bond/atom vocab +
+        #    FG heads receive no gradient.
+        #  * a small --depth: the dyMPN depth draw can then land low enough to skip message
+        #    passing entirely, leaving W_h without gradient on that batch. See
+        #    dynamic_depth_can_skip_message_passing().
+        # Neither holds for the usual 'both' + --depth 6, so the flag stays off there and
+        # DDP keeps its fast path.
         # (static_graph is not an option: dynamic-depth sampling varies the graph per step.)
         self.model = DDP(self.model, device_ids=[gpu_id],
-                         find_unused_parameters=(self.args.embedding_output_type != 'both'))
+                         find_unused_parameters=(self.args.embedding_output_type != 'both'
+                                                 or dynamic_depth_can_skip_message_passing(self.args.depth)))
 
         if self.args.tensorboard:
             self.writer = SummaryWriter(self.args.save_dir)

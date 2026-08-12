@@ -147,6 +147,29 @@ class Readout(nn.Module):
         return mol_vecs
 
 
+def dynamic_depth_can_skip_message_passing(depth: int) -> bool:
+    """
+    Whether the dyMPN depth draw can produce a depth that skips message passing entirely.
+
+    ``MPNEncoder.forward`` runs ``for _ in range(ndepth - 1)``, so a drawn ``ndepth <= 1``
+    means the loop body never executes and ``W_h`` -- plus its activation, which is
+    parameterised for PReLU -- receives no gradient for that batch. Under DDP with
+    ``find_unused_parameters=False`` that surfaces as "Expected to have finished reduction
+    in the prior iteration", naming a scattered handful of ``heads.N.mpn_{q,k,v}.W_h``
+    parameters, and which heads are named varies from step to step.
+
+    Both dynamic-depth samplers are bounded below by ``depth - 3``, so the draw can reach 1
+    only when ``depth <= 4``. ``Head`` hardcodes ``dynamic_depth="truncnorm"`` for its
+    q/k/v networks, so this applies to any training run, and the pretrain parser's
+    ``--depth`` default of 3 sits inside that range.
+
+    :param depth: the configured message passing depth (``args.depth``).
+    :return: True when the sampler can skip the loop, i.e. when DDP needs unused-parameter
+    detection to survive it.
+    """
+    return depth - 3 <= 1
+
+
 class MPNEncoder(nn.Module):
     """A message passing neural network for encoding a molecule."""
 
