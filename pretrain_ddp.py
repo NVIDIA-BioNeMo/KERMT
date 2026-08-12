@@ -727,6 +727,14 @@ def main(rank: int, world_size: int):
             print(f"Loading checkpoint from {last_ckpt_path}")
             epoch, scheduler_step, prev_batch_idx, wandb_run_id = trainer.load(last_ckpt_path)
             print(f"Loaded checkpoint from epoch={epoch}, scheduler_step={scheduler_step}, prev_batch_idx={prev_batch_idx}")
+            # Resume happens automatically whenever last_checkpoint.pt is present, so a
+            # seeded run can silently stop being reproducible. Checkpoints carry no RNG
+            # state: setup_seed() has already rewound every RNG to its initial value while
+            # the sampler skips ahead, and the dataloader workers draw from their own.
+            if args.seed is not None and rank == 0:
+                print("[WARNING] Resuming from a checkpoint with --seed set. Checkpoints carry no "
+                      "RNG state, so this run will not be bit-identical to an uninterrupted "
+                      "seeded run.", flush=True)
         else:
             epoch = 0
             scheduler_step = 0

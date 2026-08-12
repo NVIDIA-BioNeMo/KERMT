@@ -330,7 +330,9 @@ def add_pretrain_args(parser: ArgumentParser):
                              "a run reproducible: model init, dropout, the dyMPN depth draw, "
                              "the vocab masking and any bond dropout are all seeded from it. "
                              "Needed for A/B comparisons, where an unseeded run-to-run spread "
-                             "can otherwise exceed the effect being measured.")
+                             "can otherwise exceed the effect being measured. Checkpoints carry "
+                             "no RNG state, so a run resumed from one is not bit-identical to an "
+                             "uninterrupted seeded run.")
     
     # ========== Data Arguments ==========
     parser.add_argument('--train_data_path', type=str, required=True,
