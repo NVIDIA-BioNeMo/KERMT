@@ -1,0 +1,28 @@
+name: Skill packaging
+
+on:
+  pull_request:
+    paths:
+      - 'skills/**'
+      - 'agent/tests/test_skill_packaging.py'
+      - '.claude/skills'
+      - '.github/workflows/skill-packaging.yml'
+  push:
+    paths:
+      - 'skills/**'
+      - 'agent/tests/test_skill_packaging.py'
+      - '.claude/skills'
+      - '.github/workflows/skill-packaging.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify bundled shared files
+        run: python3 skills/_shared/sync_shared.py --check
+      - name: Check independently installed skills
+        run: python3 -m unittest discover -s agent/tests -p test_skill_packaging.py
