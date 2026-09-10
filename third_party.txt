@@ -201,7 +201,7 @@ License Text:
 Name: descriptastorus
 Version: 2.7.0
 License: UNKNOWN
-URL: https://github/bp-kelley/descriptastorus
+URL: https://github.com/bp-kelley/descriptastorus
 License Text:
 Copyright (c) 2018-2023, Novartis Institutes for BioMedical Research Inc.
 All rights reserved.

@@ -8,7 +8,7 @@ fixtures under tests/data/ (sanity that the validator behaves correctly on
 shapes that match what users actually have).
 
 Run from the kermt repo root:
-    pytest agent/tests/test_check_data.py -v
+    pytest tests/skills/test_check_data.py -v
 """
 from __future__ import annotations
 

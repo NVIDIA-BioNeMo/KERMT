@@ -18,7 +18,7 @@ From the repository root, after changing a canonical file:
 ```bash
 python3 skills/_shared/sync_shared.py --write
 python3 skills/_shared/sync_shared.py --check
-python3 -m unittest discover -s agent/tests -p test_skill_packaging.py
+python3 -m unittest discover -s tests/skills -p test_skill_packaging.py
 ```
 
 Commit both the canonical edits and their generated per-skill copies. This
@@ -304,7 +304,7 @@ Deterministic logic lives under [`_shared/scripts/`](_shared/scripts/):
 | `run_inference.py` | Run predictions with a finetuned checkpoint |
 | `run_extract_embeddings.py` | Extract molecular embeddings |
 
-Tests for these scripts are under [`agent/tests/`](../agent/tests/) and use the existing
+Tests for these scripts are under [`tests/skills/`](../tests/skills/) and use the existing
 fixture data in [`../tests/data/pretrain/`](../tests/data/pretrain/) and
 [`../tests/data/finetune/`](../tests/data/finetune/).
 
@@ -320,16 +320,16 @@ kermt repo checkout:
 ```bash
 # Run the full agent test suite in-container. The pytest paths are inside the
 # container, where the repo is bind-mounted at /workspace, so they stay
-# repo-relative (agent/tests/) regardless of your host working directory.
+# repo-relative (tests/skills/) regardless of your host working directory.
 $KERMT_REPO/skills/_shared/scripts/kermt_container.sh run -- \
-  "python -m pytest agent/tests/ -v --no-header -p no:cacheprovider"
+  "python -m pytest tests/skills/ -v --no-header -p no:cacheprovider"
 ```
 
 Override the image tag if you're testing against a non-default build:
 
 ```bash
 KERMT_IMAGE=kermt:rebuild-test $KERMT_REPO/skills/_shared/scripts/kermt_container.sh run -- \
-  "python -m pytest agent/tests/test_check_checkpoint.py -v"
+  "python -m pytest tests/skills/test_check_checkpoint.py -v"
 ```
 
 For quick local-dev iteration on a single test, you can also run the suite on
@@ -338,7 +338,7 @@ the host inside any conda env that has `torch`, `rdkit`, `pandas`, and
 
 ```bash
 conda activate <your-env>
-python -m pytest agent/tests/test_check_data.py -v
+python -m pytest tests/skills/test_check_data.py -v
 ```
 
 But the final sign-off for any change in `skills/_shared/scripts/` is the in-container

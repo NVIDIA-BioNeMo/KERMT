@@ -4,13 +4,13 @@ on:
   pull_request:
     paths:
       - 'skills/**'
-      - 'agent/tests/test_skill_packaging.py'
+      - 'tests/skills/**'
       - '.claude/skills'
       - '.github/workflows/skill-packaging.yml'
   push:
     paths:
       - 'skills/**'
-      - 'agent/tests/test_skill_packaging.py'
+      - 'tests/skills/**'
       - '.claude/skills'
       - '.github/workflows/skill-packaging.yml'
 
@@ -25,4 +25,4 @@ jobs:
       - name: Verify bundled shared files
         run: python3 skills/_shared/sync_shared.py --check
       - name: Check independently installed skills
-        run: python3 -m unittest discover -s agent/tests -p test_skill_packaging.py
+        run: python3 -m unittest discover -s tests/skills -p test_skill_packaging.py

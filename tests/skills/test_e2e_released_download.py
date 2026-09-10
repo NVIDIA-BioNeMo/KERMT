@@ -10,7 +10,7 @@ SKIPPED by default; opt in with `--run-slow`, and run inside the kermt
 container (which, after a `kermt-setup` rebuild, ships huggingface_hub):
 
     skills/_shared/scripts/kermt_container.sh run --run-dir /tmp/e2e -- \\
-        "python -m pytest agent/tests/test_e2e_released_download.py -v --run-slow"
+        "python -m pytest tests/skills/test_e2e_released_download.py -v --run-slow"
 
 The bundle is downloaded ONCE per session (module-scoped fixture); the
 idempotent fetch means re-runs don't re-download. If the download can't run

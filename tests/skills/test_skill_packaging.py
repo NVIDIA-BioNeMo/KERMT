@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Packaging checks that need only Python and Bash, with no GPU or Docker.
 
-Run with python3 -m unittest discover -s agent/tests -p test_skill_packaging.py.
+Run with python3 -m unittest discover -s tests/skills -p test_skill_packaging.py.
 The container tests record Docker arguments using a fake executable; they do
 not start containers or exercise model computation.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -52,6 +53,34 @@ class SkillPackagingTests(unittest.TestCase):
             [sys.executable, "-B", *map(str, args)], cwd=self.root,
             env=env, text=True, capture_output=True,
         )
+
+    def test_test_entrypoints_resolve_without_ml_dependencies(self):
+        # Evaluate only path declarations, so a moved test's broken SCRIPT
+        # path is caught in CI even when Torch/RDKit cannot be imported.
+        for module in sorted((REPO_ROOT / "tests/skills").glob("*.py")):
+            scope = {"Path": Path, "__file__": str(module), "__builtins__": {}}
+            for node in ast.parse(module.read_text()).body:
+                if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                    continue
+                if not isinstance(node.targets[0], ast.Name):
+                    continue
+                names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+                if not names or not names <= scope.keys():
+                    continue
+                value = eval(compile(ast.Expression(node.value), str(module), "eval"), scope)
+                if not isinstance(value, Path):
+                    continue
+                name = node.targets[0].id
+                scope[name] = value
+                # Optional downloaded checkpoints and CSV datasets may be
+                # absent. Repository roots, entrypoints and configs must exist.
+                with self.subTest(module=module.name, path=name):
+                    if name == "REPO_ROOT":
+                        self.assertEqual(value, REPO_ROOT)
+                    if name.endswith(("_ROOT", "_DIR")):
+                        self.assertTrue(value.is_dir(), f"{module}:{node.lineno}: {value}")
+                    elif value.suffix in {".py", ".sh", ".json"}:
+                        self.assertTrue(value.is_file(), f"{module}:{node.lineno}: {value}")
 
     def test_bundles_contain_referenced_assets_and_no_symlinks(self):
         manifests = sorted(SKILLS.glob("kermt-*/SKILL.md"))

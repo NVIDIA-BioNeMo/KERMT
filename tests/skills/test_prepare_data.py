@@ -9,7 +9,7 @@ per-mode contracts.
 
 Designed to run in-container via:
     KERMT_IMAGE=kermt:rebuild-test skills/_shared/scripts/kermt_container.sh run -- \
-        "python -m pytest agent/tests/test_prepare_data.py -v --no-header -p no:cacheprovider"
+        "python -m pytest tests/skills/test_prepare_data.py -v --no-header -p no:cacheprovider"
 
 The tests use small synthetic CSVs (50-100 SMILES) so feature generation
 finishes quickly. Total in-container runtime ≈ 1-2 minutes (vocab build +

@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Pytest configuration for agent/tests/.
+"""Pytest configuration for tests/skills/.
 
 Registers the `slow` marker for tests that take more than a few seconds (e.g.
 end-to-end pretrain that actually launches pretrain_ddp.py). Slow tests are
 SKIPPED by default; pass `--run-slow` to opt in:
 
     KERMT_IMAGE=kermt:rebuild-test skills/_shared/scripts/kermt_container.sh run -- \\
-        "python -m pytest agent/tests/ -v --run-slow"
+        "python -m pytest tests/skills/ -v --run-slow"
 
 Also exposes a `run_agent_script` fixture used by every test_*.py to shell
 out to an skills/_shared/scripts/*.py and parse the JSON it emits to stdout. Before

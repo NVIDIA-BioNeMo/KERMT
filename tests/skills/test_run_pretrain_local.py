@@ -9,7 +9,7 @@ seconds without burning GPU time on actual pretrain epochs.
 
 Run in-container:
     KERMT_IMAGE=kermt:rebuild-test skills/_shared/scripts/kermt_container.sh run -- \
-        "python -m pytest agent/tests/test_run_pretrain_local.py -v \\
+        "python -m pytest tests/skills/test_run_pretrain_local.py -v \\
             --no-header -p no:cacheprovider"
 """
 from __future__ import annotations
@@ -925,7 +925,7 @@ def test_materialize_ckpt_zeroes_resume_counters(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Skipped by default. To run:
 #   KERMT_IMAGE=kermt:rebuild-test skills/_shared/scripts/kermt_container.sh run -- \
-#     "python -m pytest agent/tests/test_run_pretrain_local.py::test_end_to_end_continue_pretrain_default_mode -v --run-slow"
+#     "python -m pytest tests/skills/test_run_pretrain_local.py::test_end_to_end_continue_pretrain_default_mode -v --run-slow"
 #
 # Builds a fake grover_base ckpt whose vocab heads match tests/data/pretrain's
 # atom + bond vocab files, then runs run_pretrain_local.py for one full epoch
@@ -966,7 +966,7 @@ def _build_fake_grover_base_ckpt(tmp_path: Path, **extra_args: object) -> Path:
     extra_args are forwarded as kebab-case CLI flags (e.g.
     `scheduler_step=100` -> `--scheduler-step 100`)."""
     fixture_dir = REPO_ROOT / "tests" / "data" / "pretrain"
-    builder = REPO_ROOT / "agent" / "tests" / "_build_fake_ckpt.py"
+    builder = REPO_ROOT / "tests" / "skills" / "_build_fake_ckpt.py"
     fake_ckpt = tmp_path / "fake.pt"
     cli = [
         sys.executable, str(builder),

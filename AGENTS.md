@@ -23,4 +23,4 @@ Shared helpers and defaults are maintained in `skills/_shared/`. After editing
 them, run `python3 skills/_shared/sync_shared.py --write` and commit the
 per-skill copies; `--check` verifies they match. Each skill must use its
 own bundled files so it can be installed and signed independently.
-Development tests remain under `agent/tests/`.
+Development tests remain under `tests/skills/`.

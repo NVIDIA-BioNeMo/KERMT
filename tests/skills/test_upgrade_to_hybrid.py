@@ -11,7 +11,7 @@ Builds synthetic grover_base ckpts (modern `kermt.encoders.*` prefix AND legacy
 
 In-container by default:
     KERMT_IMAGE=kermt:rebuild-test skills/_shared/scripts/kermt_container.sh run -- \\
-        "python -m pytest agent/tests/test_upgrade_to_hybrid.py -v \\
+        "python -m pytest tests/skills/test_upgrade_to_hybrid.py -v \\
             --no-header -p no:cacheprovider"
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UPGRADE_SCRIPT = REPO_ROOT / "skills" / "_shared" / "scripts" / "upgrade_to_hybrid.py"
 CHECK_CKPT = REPO_ROOT / "skills" / "_shared" / "scripts" / "check_checkpoint.py"
-BUILD_FAKE = REPO_ROOT / "agent" / "tests" / "_build_fake_ckpt.py"
+BUILD_FAKE = REPO_ROOT / "tests" / "skills" / "_build_fake_ckpt.py"
 PRETRAIN_FIXTURE = REPO_ROOT / "tests" / "data" / "pretrain"
 
 
@@ -292,7 +292,7 @@ def test_upgraded_ckpt_loads_in_run_pretrain_local_dry_run(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 # Skipped by default. To run:
 #   KERMT_IMAGE=kermt:rebuild-test skills/_shared/scripts/kermt_container.sh run -- \
-#     "python -m pytest agent/tests/test_upgrade_to_hybrid.py::test_end_to_end_one_epoch_after_upgrade_hybrid -v --run-slow"
+#     "python -m pytest tests/skills/test_upgrade_to_hybrid.py::test_end_to_end_one_epoch_after_upgrade_hybrid -v --run-slow"
 #
 # Mirrors the pretrain runner's test_end_to_end_continue_pretrain_default_mode
 # but adds the upgrade step at the front:

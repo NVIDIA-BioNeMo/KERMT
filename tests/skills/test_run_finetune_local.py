@@ -10,7 +10,7 @@ seconds.
 
 Run in-container:
     KERMT_IMAGE=kermt:rebuild-test skills/_shared/scripts/kermt_container.sh run -- \\
-        "python -m pytest agent/tests/test_run_finetune_local.py -v \\
+        "python -m pytest tests/skills/test_run_finetune_local.py -v \\
             --no-header -p no:cacheprovider"
 """
 from __future__ import annotations

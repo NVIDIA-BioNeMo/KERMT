@@ -9,7 +9,7 @@ key prefixes). Each test exercises one classification path + one mode contract,
 or one arch-derivation branch.
 
 Run from the kermt repo root:
-    pytest agent/tests/test_check_checkpoint.py -v
+    pytest tests/skills/test_check_checkpoint.py -v
 """
 from __future__ import annotations
 
@@ -23,7 +23,8 @@ import pytest
 import torch
 
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_checkpoint.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "skills" / "_shared" / "scripts" / "check_checkpoint.py"
 
 
 # ---------------------------------------------------------------------------

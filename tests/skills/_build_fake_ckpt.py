@@ -10,12 +10,12 @@ so pretrain_ddp.py's `trainer.load` can pick it up via the auto-resume path
 (`<save_dir>/last_checkpoint.pt`).
 
 Run inside the kermt container — needs the kermt package + torch + the vocab
-loader. Not invoked in production; lives under agent/tests/ because that's the
+loader. Not invoked in production; lives under tests/skills/ because that's the
 only context that needs to forge a checkpoint.
 
 Usage
 -----
-    python agent/tests/_build_fake_ckpt.py \
+    python tests/skills/_build_fake_ckpt.py \
         --atom-vocab tests/data/pretrain/pretrain_atom_vocab.json \
         --bond-vocab tests/data/pretrain/pretrain_bond_vocab.json \
         --out /tmp/fake_grover_base.pt \
