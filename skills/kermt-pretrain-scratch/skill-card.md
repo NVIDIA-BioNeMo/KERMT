@@ -1,77 +1,85 @@
 ## Description: <br>
-Pretrains a fresh KERMT model from scratch on a user-provided corpus — building a new vocabulary, instantiating the model architecture from defaults, and launching `pretrain_ddp.py` inside the KERMT container with no starting checkpoint loaded. <br>
+Pretrain a fresh KERMT model from scratch on a user-provided corpus, building a new vocabulary, instantiating the model architecture from defaults, and launching distributed pretraining inside the kermt container. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
 ## Owner
-NVIDIA (evax@nvidia.com) <br>
+NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache-2.0 <br>
-
+Apache 2.0 <br>
 ## Use Case: <br>
-ML research engineers training a KERMT model from random initialization on a corpus sufficiently large and distinct that continued pretraining from an existing checkpoint is not appropriate. For most users, `kermt-continue-pretrain` is the better starting point. <br>
-
-### Requirements/Dependencies: <br>
-Requires API Key or External Credential: Optional <br>
-Credential Type(s): API key — `WANDB_API_KEY` for optional Weights & Biases run tracking <br>
-
-* `kermt-setup` completed (supplies the `kermt:latest` image) <br>
-* Docker, NVIDIA Container Toolkit, CUDA-capable NVIDIA GPU (multi-GPU strongly recommended; DDP supported) <br>
-* A large pretraining corpus CSV <br>
-* Substantial disk for shard, vocabulary, and feature artifacts <br>
-
-Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
+Developers and computational chemists who need to pretrain a new KERMT molecular property prediction model from scratch on a custom chemistry corpus, rather than continuing from a released checkpoint. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
+
 ## Known Risks and Mitigations: <br>
-Risk: This is the most expensive skill in the KERMT family — training from random initialization can consume days to weeks of multi-GPU time, and a single agent instruction can start it. <br>
-Mitigation: Runs launch detached with a run manifest; `kermt-monitor` provides progress visibility and the container identifiers needed to terminate early. Users should confirm corpus scale justifies from-scratch training before invoking. <br>
-
-Risk: Training from scratch on an insufficiently large corpus produces a model materially worse than the available pretrained checkpoints, with the cost discovered only after the run. <br>
-Mitigation: The skill is documented as the exception path, with `kermt-continue-pretrain` as the recommended default; users should benchmark against an existing checkpoint before committing. <br>
-
-Risk: A vocabulary built from the user's corpus is not interchangeable with vocabularies from other checkpoints, so resulting models are incompatible with checkpoints trained elsewhere. <br>
-Mitigation: The new vocabulary is written alongside the checkpoint in the run directory, making the pairing explicit and auditable. <br>
-
-Risk: Data preparation writes large shard/vocab/feature artifacts and can overwrite prior preparation output. <br>
-Mitigation: Preparation writes under an explicit run/output path supplied by the user. <br>
-
-Risk: When Weights & Biases tracking is enabled, run metadata is transmitted to a third-party service. <br>
-Mitigation: W&B tracking is optional and off unless the user supplies `WANDB_API_KEY`. <br>
+Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
+Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [KERMT repository](https://github.com/NVIDIA-BioNeMo/KERMT) <br>
-- `scripts/run_pretrain_local.py` — extended usage examples <br>
-- Related skills: `kermt-setup`, `kermt-monitor`, `kermt-continue-pretrain`, `kermt-finetune` <br>
+- [KERMT paper — Multitask finetuning and acceleration of chemical pretrained models](https://arxiv.org/abs/2510.12719) <br>
+- [GROVER paper — Self-Supervised Graph Transformer on Large-Scale Molecular Data](https://arxiv.org/abs/2007.02835) <br>
+- [cuik-molmaker — GPU-accelerated molecular featurization](https://github.com/NVIDIA-Digital-Bio/cuik-molmaker) <br>
+- [Original GROVER implementation](https://github.com/tencent-ailab/grover) <br>
+
 
 ## Skill Output: <br>
-**Output Type(s):** [Files, Analysis] <br>
-**Output Format:** [Model checkpoint files; new vocabulary; shard/feature artifacts; training logs; `run.json` manifest; Markdown launch summary] <br>
-**Output Parameters:** [1D — run identifier, container id, vocabulary path, model configuration, output paths] <br>
-**Other Properties Related to Output:** [Detached execution: the skill returns after launch, not after training completes.] <br>
+**Output Type(s):** [Shell commands, Configuration instructions, Files] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Parameters:** [1D] <br>
+**Other Properties Related to Output:** [Produces a run manifest (run.json), training logs, and TensorBoard event files in the run directory] <br>
 
 ## Evaluation Agents Used: <br>
-Target agents: `claude-code`, `codex`. NVSkills-Eval has not yet been run against this skill — see Evaluation Results. <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
+
+
 
 ## Evaluation Tasks: <br>
-4 evaluation tasks defined in `evals/evals.json`, covering corpus validation, vocabulary construction, architecture instantiation, and detached launch. <br>
+4 evaluation tasks (3 positive, 1 negative) executed with 3 attempts per task in isolated sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
-Planned NVSkills-Eval dimensions: Security, Correctness, Discoverability, Effectiveness, Efficiency. <br>
+Reported benchmark dimensions: <br>
+- Security: Whether the skill is safe to use, checking for unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Whether the answer is correct, measured by final-answer accuracy against the reference answer. <br>
+- Discoverability: Whether the right skill was loaded when needed, including skill selection and decoy avoidance. <br>
+- Effectiveness: Whether the skill helped complete the task, combining goal completion and expected workflow adherence. <br>
+- Efficiency: Whether the skill avoided wasted tool calls and token usage, combining tool-call productivity and token efficiency. <br>
+
+Underlying evaluation signals used in this run: <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `goal_accuracy`: Whether the user's goal was achieved. <br>
+- `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Tool-call productivity measured against expected tool usage. <br>
+- `token_efficiency`: Actual uncached prompt plus completion token usage relative to baseline. <br>
+
+
 
 ## Evaluation Results: <br>
-Pending. NVSkills-Eval has not been run for this skill; results and a `BENCHMARK.md` will be published when the evaluation pipeline runs. <br>
+| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
+|---|---:|---:|
+| Overall | 83.4% | 79.8% |
+| Security | 100.0% → 100.0% (±0.0 points) | 57.1% → 100.0% (+42.9 points) |
+| Correctness | 6.7% → 95.0% (+88.3 points) | 68.6% → 100.0% (+31.4 points) |
+| Discoverability | 91.7% | 86.7% |
+| Effectiveness | 19.5% → 47.5% (+28.0 points) | 36.1% → 40.6% (+4.5 points) |
+| Efficiency | 82.8% | 71.8% |
 
 ## Skill Version(s): <br>
-b1c082c (source: git SHA, committed 2026-07-17) <br>
+77111e0 (source: git SHA, committed 2026-09-09) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
 
-Models produced by this skill inherit the composition and biases of the user's pretraining corpus entirely, with no counterbalancing from prior pretraining. Downstream predictions are research hypotheses and must not be used as the sole basis for clinical, safety, or regulatory decisions. <br>
-
 (For Release on NVIDIA Platforms Only) <br>
-Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://www.nvidia.com/en-us/support/submit-security-vulnerability/). <br>
+Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://app.intigriti.com/programs/nvidia/nvidiavdp/detail). <br>

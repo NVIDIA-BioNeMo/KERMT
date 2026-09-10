@@ -1,69 +1,85 @@
 ## Description: <br>
-Bootstraps the KERMT agent environment — verifies host Docker and the NVIDIA Container Toolkit, builds the `kermt:latest` image from the repository Dockerfile if absent, and runs a GPU smoke test inside the container. <br>
+Bootstrap the KERMT agent environment — verify host docker + nvidia-container-toolkit, build the kermt:latest image from the repo’s Dockerfile if it doesn’t yet exist, and run a GPU smoke test inside the container. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
 ## Owner
-NVIDIA (evax@nvidia.com) <br>
+NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache-2.0 <br>
-
+Apache 2.0 <br>
 ## Use Case: <br>
-Computational chemists and ML engineers preparing a workstation or GPU node to run any `kermt-*` skill. Every other KERMT skill depends on this one; it is the first skill to invoke on a fresh clone. <br>
-
-### Requirements/Dependencies: <br>
-Requires API Key or External Credential: No <br>
-Credential Type(s): None <br>
-
-* Docker <br>
-* NVIDIA Container Toolkit <br>
-* CUDA-capable NVIDIA GPU <br>
-* A local clone of the KERMT repository (supplies the Dockerfile) <br>
-
-Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
+Developers and engineers setting up the KERMT molecular property prediction environment, verifying docker and GPU prerequisites, and building the container image before running training, finetuning, or inference workflows. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
+
 ## Known Risks and Mitigations: <br>
-Risk: The skill builds a container image and runs GPU workloads, which consumes significant local disk and can take tens of minutes on a cold cache. <br>
-Mitigation: The skill checks for an existing `kermt:latest` image and skips the build when one is present; the smoke test is short and read-only. <br>
-
-Risk: Docker commands require elevated host privileges, and an agent running them has broad access to the host container runtime. <br>
-Mitigation: The skill issues only build, run, and inspect commands against the KERMT image; users should keep their agent's command-approval gate enabled and review commands before execution. <br>
-
-Risk: A partially configured host (driver/toolkit mismatch) can produce a container that starts but cannot see the GPU, causing confusing downstream failures in training skills. <br>
-Mitigation: The GPU smoke test runs inside the container and fails loudly at setup time rather than deferring the error to a long-running job. <br>
+Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
+Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [KERMT repository](https://github.com/NVIDIA-BioNeMo/KERMT) <br>
-- [NVIDIA Container Toolkit documentation](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/) <br>
-- `scripts/kermt_container.sh` — container entry points used by this skill <br>
+- [KERMT paper](https://arxiv.org/abs/2510.12719) <br>
+- [GROVER paper](https://arxiv.org/abs/2007.02835) <br>
+- [cuik-molmaker](https://github.com/NVIDIA-Digital-Bio/cuik-molmaker) <br>
+- [GROVER original implementation](https://github.com/tencent-ailab/grover) <br>
+
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis, Configuration instructions] <br>
-**Output Format:** [Markdown status report with inline bash commands] <br>
-**Output Parameters:** [1D — pass/fail status per environment check] <br>
-**Other Properties Related to Output:** [Side effect: builds the `kermt:latest` Docker image on the host if it does not already exist] <br>
+**Output Type(s):** [Shell commands, Configuration instructions] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Parameters:** [1D] <br>
+**Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-Target agents: `claude-code`, `codex`. NVSkills-Eval has not yet been run against this skill — see Evaluation Results. <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
+
+
 
 ## Evaluation Tasks: <br>
-4 evaluation tasks defined in `evals/evals.json`, covering environment verification, image build, and GPU smoke test paths. <br>
+4 evaluation tasks (3 positive, 1 negative) with 3 attempts each, run in isolated k8s-sandbox pods. Dataset: skill-evaluator-dataset-snapshot/1. <br>
 
 ## Evaluation Metrics Used: <br>
-Planned NVSkills-Eval dimensions: Security, Correctness, Discoverability, Effectiveness, Efficiency. <br>
+Reported benchmark dimensions: <br>
+- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Final-answer correctness against the reference answer. <br>
+- Discoverability: Whether the expected skill was selected and activated when needed. <br>
+- Effectiveness: Whether the skill helped complete the user's goal and followed the expected workflow. <br>
+- Efficiency: Whether the skill avoided wasted tool calls and excessive token usage. <br>
+
+Underlying evaluation signals used in this run: <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `goal_accuracy`: Whether the user's goal was achieved. <br>
+- `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Tool-call productivity (routing scored under Discoverability, not Efficiency). <br>
+- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
+
+
 
 ## Evaluation Results: <br>
-Pending. NVSkills-Eval has not been run for this skill; results and a `BENCHMARK.md` will be published when the evaluation pipeline runs. <br>
+| Measure | Claude Code (Baseline → Skill) | Codex (Baseline → Skill) |
+|---|---:|---:|
+| Overall | 84.9% | 87.8% |
+| Security | 100.0% → 75.0% (-25.0 pp) | 62.5% → 100.0% (+37.5 pp) |
+| Correctness | 40.0% → 100.0% (+60.0 pp) | 55.0% → 100.0% (+45.0 pp) |
+| Discoverability | 91.7% | 91.7% |
+| Effectiveness | 30.6% → 74.4% (+43.8 pp) | 39.4% → 67.5% (+28.1 pp) |
+| Efficiency | 83.3% | 79.8% |
 
 ## Skill Version(s): <br>
-b1c082c (source: git SHA, committed 2026-07-17) <br>
+77111e0 (source: git SHA, committed 2026-09-09) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
 
 (For Release on NVIDIA Platforms Only) <br>
-Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://www.nvidia.com/en-us/support/submit-security-vulnerability/). <br>
+Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://app.intigriti.com/programs/nvidia/nvidiavdp/detail). <br>
