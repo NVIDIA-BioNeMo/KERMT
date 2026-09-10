@@ -20,7 +20,7 @@ after the Dockerfile or `environment.yml` changes) before invoking any other
 
 ## Skill and runtime paths
 
-Set `SKILL_DIR` to the directory containing this `SKILL.md`. Export
+Set `SKILL_DIR` to the absolute path of this installed skill directory. Export
 `KERMT_REPO` as the absolute path to the KERMT checkout used for model
 execution. The bundled container helper mounts that checkout at
 `/workspace` and this skill at `/skill` (read-only). Commands inside

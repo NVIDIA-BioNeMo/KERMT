@@ -65,7 +65,7 @@ import torch
 # or as a bare `python scripts/upgrade_to_hybrid.py …`.
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _utils import count_vocab_entries, load_json, run_checkpoint_validator  # noqa: E402
+from _utils import count_vocab_entries, load_checkpoint, load_json, run_checkpoint_validator  # noqa: E402
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -251,7 +251,7 @@ def upgrade(args: argparse.Namespace) -> dict[str, Any]:
     decoder_defaults = defaults.get("add_cmim_decoder") or {}
     latent_dim = args.latent_dim if args.latent_dim is not None else decoder_defaults.get("latent_dim", 800)
 
-    input_ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=False)
+    input_ckpt = load_checkpoint(args.ckpt)
     input_args = input_ckpt.get("args")
     if input_args is None:
         raise ValueError(

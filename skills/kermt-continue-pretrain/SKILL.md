@@ -1,6 +1,6 @@
 ---
 name: kermt-continue-pretrain
-description: Continue pretraining from an existing KERMT checkpoint. The skill validates the user's checkpoint and pretrain CSV, prepares the data into shard/vocab/features form, then launches pretrain_ddp.py inside the kermt container (detached for long runs). Auto-dispatches `--pretrain_mode` based on the checkpoint type (grover_base vocab-only, cmim, or hybrid).
+description: Continue KERMT pretraining on a custom SMILES corpus with a grover_base, cmim, or hybrid checkpoint. Use a local checkpoint or optionally download a pinned Hugging Face model bundle using HF_TOKEN if configured. Run containerized training and write model bundles, prepared data, logs, and checkpoints to user-selected host directories.
 license: Apache-2.0
 compatibility: Requires docker, nvidia-container-toolkit, and a CUDA-capable NVIDIA GPU. Designed for Claude Code, Codex, and Nemotron.
 metadata:
@@ -20,12 +20,22 @@ prepares the corpus, launches the runner, and returns a run directory.
 
 ## Skill and runtime paths
 
-Set `SKILL_DIR` to the directory containing this `SKILL.md`. Export
+Set `SKILL_DIR` to the absolute path of this installed skill directory. Export
 `KERMT_REPO` as the absolute path to the KERMT checkout used for model
 execution. The bundled container helper mounts that checkout at
 `/workspace` and this skill at `/skill` (read-only). Commands inside
 the container use `/skill/scripts/`; defaults are bundled in `config/`.
 See [Released models](references/released-models.md) for checkpoint bundle requirements.
+
+## Downloads and local outputs
+
+The optional released-model branch reads `config/released_model.json` for the
+Hugging Face repository, pinned revision, and filenames. The bundled
+`scripts/fetch_released_model.py` downloads the model bundle over HTTPS into
+the host directory the user selects. Public models work without credentials;
+if `HF_TOKEN` is set, the container helper forwards it for Hugging Face
+authentication. Prepared data, logs, and workflow results go into the chosen
+run directory.
 
 ## Hardware requirements
 

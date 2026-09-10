@@ -1,6 +1,6 @@
 ---
 name: kermt-finetune
-description: Finetune a pretrained KERMT encoder on a labeled CSV. The skill validates the input checkpoint (must be a pretrain ckpt — grover_base / cmim / hybrid), validates the labeled CSV, prepares the data (clean + features + optional split), then launches main.py finetune inside the kermt container (detached for hours-scale runs). Hyperparameters come from config/defaults_finetune.json with per-flag CLI override.
+description: Finetune a pretrained KERMT encoder on a labeled CSV. Validate the checkpoint and data, prepare features, and run containerized training. Use a local checkpoint or optionally download a pinned Hugging Face model bundle using HF_TOKEN if configured. Write model bundles, prepared data, logs, and trained models to user-selected host directories.
 license: Apache-2.0
 compatibility: Requires docker, nvidia-container-toolkit, and a CUDA-capable NVIDIA GPU. Designed for Claude Code, Codex, and Nemotron.
 metadata:
@@ -19,12 +19,22 @@ launch the runner detached, return a run directory + container name.
 
 ## Skill and runtime paths
 
-Set `SKILL_DIR` to the directory containing this `SKILL.md`. Export
+Set `SKILL_DIR` to the absolute path of this installed skill directory. Export
 `KERMT_REPO` as the absolute path to the KERMT checkout used for model
 execution. The bundled container helper mounts that checkout at
 `/workspace` and this skill at `/skill` (read-only). Commands inside
 the container use `/skill/scripts/`; defaults are bundled in `config/`.
 See [Released models](references/released-models.md) for checkpoint bundle requirements.
+
+## Downloads and local outputs
+
+The optional released-model branch reads `config/released_model.json` for the
+Hugging Face repository, pinned revision, and filenames. The bundled
+`scripts/fetch_released_model.py` downloads the model bundle over HTTPS into
+the host directory the user selects. Public models work without credentials;
+if `HF_TOKEN` is set, the container helper forwards it for Hugging Face
+authentication. Prepared data, logs, and workflow results go into the chosen
+run directory.
 
 ## Hardware requirements
 

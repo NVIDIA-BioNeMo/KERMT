@@ -129,6 +129,21 @@ See the [released-model guide](_shared/references/released-models.md) for the
 bundle layout, vocabulary compatibility, and handling incomplete downloads.
 That canonical guide is also bundled into the skills that fetch released models.
 
+### Artifact validation and runtime settings
+
+Skill helpers read checkpoints with PyTorch's restricted weights loader, allowing
+KERMT's saved argument namespace and numeric NumPy scaler metadata. Legacy
+MolVocab and SMILESVocab pickles are inspected as stored vocabulary data for token
+counts. Artifacts requiring other Python classes or executable reducers are
+rejected instead of being loaded through an unrestricted fallback.
+
+Training, inference, and embedding subprocesses receive named runtime settings
+for Python paths, temporary files, CUDA, NCCL, and CPU threading. The list lives
+in `runner_environment` in `_shared/scripts/_utils.py`. Unrelated credentials
+are excluded. W&B credentials and settings are forwarded only when pretraining
+explicitly enables logging with `--wandb-project`; Hugging Face authentication
+is handled by the separate model-download helper.
+
 ## Token-efficient design
 
 The skill files (`.md`) are intentionally thin — they orchestrate, prompt for

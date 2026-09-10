@@ -53,8 +53,8 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _utils import (  # noqa: E402
     resolve_kermt_repo, assert_prepare_manifest_basics, count_vocab_entries, docker_image_digest,
-    format_cmd_replay, git_commit_with_env_override, load_json,
-    merge_default_into_applied, run_checkpoint_validator,
+    format_cmd_replay, git_commit_with_env_override, load_json, load_checkpoint,
+    merge_default_into_applied, run_checkpoint_validator, runner_environment,
 )
 
 
@@ -315,7 +315,7 @@ def _materialize_ckpt_for_fresh_schedule(user_ckpt: Path, save_dir: Path) -> Pat
     target = save_dir / "last_checkpoint.pt"
     if target.exists() or target.is_symlink():
         target.unlink()
-    ckpt = torch.load(user_ckpt, map_location="cpu", weights_only=False)
+    ckpt = load_checkpoint(user_ckpt)
     if not isinstance(ckpt, dict) or "state_dict" not in ckpt:
         raise ValueError(
             f"ckpt {user_ckpt} is not in the expected save_model_for_restart "
@@ -335,8 +335,7 @@ def _validate_resume_state(user_ckpt: Path) -> dict[str, Any]:
     (optimizer state, scheduler_step, epoch, batch_idx). Returns a small
     `resume_state` dict for the manifest so users can see what was restored.
     Raises ValueError with a clear redirect if the ckpt is too lean."""
-    import torch
-    ckpt = torch.load(user_ckpt, map_location="cpu", weights_only=False)
+    ckpt = load_checkpoint(user_ckpt)
     if not isinstance(ckpt, dict) or "state_dict" not in ckpt:
         raise ValueError(
             f"ckpt {user_ckpt} is not in the expected save_model_for_restart "
@@ -645,7 +644,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         run_manifest["status"] = "dry_run"
         return run_manifest
 
-    env = os.environ.copy()
+    env = runner_environment(REPO_ROOT, wandb="wandb_project" in applied)
     env["WORLD_SIZE"] = str(world_size)
     if gpus_str:
         env["CUDA_VISIBLE_DEVICES"] = gpus_str

@@ -47,7 +47,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 from _utils import (  # noqa: E402
     resolve_kermt_repo, assert_prepare_manifest_basics, docker_image_digest, format_cmd_replay,
     git_commit_with_env_override, load_json, merge_default_into_applied,
-    resolve_single_gpu, run_checkpoint_validator,
+    resolve_single_gpu, run_checkpoint_validator, runner_environment,
 )
 
 
@@ -173,7 +173,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         run_manifest["status"] = "dry_run"
         return run_manifest
 
-    env = os.environ.copy()
+    env = runner_environment(REPO_ROOT)
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
     log_file = out_dir / "logs" / "embed.log"
     with log_file.open("w") as logf:

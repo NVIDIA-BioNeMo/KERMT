@@ -10,8 +10,11 @@ maintains its own primary CLI + main flow.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import os
+import pickle
+import re
 import shlex
 import subprocess
 import sys
@@ -72,11 +75,11 @@ def count_vocab_entries(vocab_path: Path) -> int:
     Handles three layouts:
       - JSON with `{stoi: {token: idx}, ...}` (MolVocab.save_vocab default)
       - JSON as a raw `{token: idx}` dict (legacy / hand-edited)
-      - Pickle of a MolVocab / SMILESVocab object (the smiles vocab is always
-        pickled because its compiled-regex tokenizer state isn't
-        JSON-serializable). Falls through to raw `pickle.load` if the
-        MolVocab / SMILESVocab loader can't import or fails to recognize
-        the contents (e.g. test fixtures with plain dicts).
+      - Legacy MolVocab / SMILESVocab pickles, read as inert vocabulary state.
+
+    The pickle reader accepts only the known vocabulary containers and their
+    Counter/regex metadata. It cannot import arbitrary classes or run reducers
+    supplied by the artifact, and it never falls back to an unrestricted loader.
     """
     if vocab_path.suffix == ".json":
         data = json.loads(vocab_path.read_text())
@@ -86,26 +89,86 @@ def count_vocab_entries(vocab_path: Path) -> int:
             return len(data)
         raise ValueError(f"unsupported JSON vocab shape at {vocab_path}: {type(data).__name__}")
 
-    # .pkl: try MolVocab / SMILESVocab first, then fall back to raw pickle.
-    try:
-        from kermt.data.torchvocab import MolVocab, SMILESVocab  # type: ignore
-        for loader in (MolVocab.load_vocab, SMILESVocab.load_vocab):
-            try:
-                v = loader(str(vocab_path))
-                return len(v)
-            except Exception:
-                continue
-    except ImportError:
-        pass
-
-    import pickle
     with vocab_path.open("rb") as f:
-        data = pickle.load(f)
-    if hasattr(data, "stoi"):
+        data = _VocabUnpickler(f).load()
+    if isinstance(data, _VocabState) and isinstance(data.stoi, dict):
         return len(data.stoi)
-    if hasattr(data, "__len__"):
+    if isinstance(data, (dict, list, tuple)):
         return len(data)
     raise ValueError(f"could not count entries in {vocab_path}")
+
+
+class _VocabState:
+    """Data-only stand-in: counting tokens does not require tokenizer methods."""
+
+
+class _VocabUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str) -> Any:
+        if module in {"kermt.data.torchvocab", "grover.data.torchvocab"} and name in {
+            "TorchVocab", "MolVocab", "SMILESVocab",
+        }:
+            return _VocabState
+        if (module, name) == ("collections", "Counter"):
+            return Counter
+        if (module, name) == ("re", "_compile"):
+            return re.compile
+        raise pickle.UnpicklingError(f"unsupported vocabulary object: {module}.{name}")
+
+
+def load_checkpoint(path: Path | str) -> dict[str, Any]:
+    """Read KERMT tensors and known metadata with PyTorch's restricted loader.
+
+    Saved arguments use argparse.Namespace; finetuned checkpoints also contain
+    numeric NumPy scaler arrays. Explicit globals cover those formats, including
+    NumPy 1/2 module names, without accepting artifact-selected imports.
+    """
+    import numpy as np
+    import torch
+
+    multiarray = np._core.multiarray if hasattr(np, "_core") else np.core.multiarray
+    allowed = [argparse.Namespace, np.ndarray, np.dtype]
+    for module in ("numpy.core.multiarray", "numpy._core.multiarray"):
+        allowed.extend([
+            (multiarray._reconstruct, f"{module}._reconstruct"),
+            (multiarray.scalar, f"{module}.scalar"),
+        ])
+    allowed.extend(type(np.dtype(name)) for name in (
+        "bool", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+        "float16", "float32", "float64",
+    ))
+    with torch.serialization.safe_globals(allowed):
+        return torch.load(path, map_location="cpu", weights_only=True)
+
+
+def runner_environment(repo: Path, *, wandb: bool = False) -> dict[str, str]:
+    """Forward named runtime settings, keeping unrelated credentials out of jobs.
+
+    W&B credentials/settings are included only for an explicitly enabled W&B
+    run. Hugging Face authentication belongs to the separate download helper.
+    """
+    names = (
+        "PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+        "LD_LIBRARY_PATH", "LIBRARY_PATH", "CUDA_HOME", "CUDA_PATH", "PYTHONPATH",
+        "PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED", "PYTHONWARNINGS",
+        "CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "CUDA_LAUNCH_BLOCKING", "NVIDIA_VISIBLE_DEVICES",
+        "NVIDIA_DRIVER_CAPABILITIES", "CUBLAS_WORKSPACE_CONFIG", "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+        "PYTORCH_CUDA_ALLOC_CONF", "PYTORCH_ALLOC_CONF", "PYTORCH_NO_CUDA_MEMORY_CACHING",
+        "TORCH_CPP_LOG_LEVEL", "TORCH_DISTRIBUTED_DEBUG", "NCCL_DEBUG", "NCCL_SOCKET_IFNAME",
+        "NCCL_IB_DISABLE", "NCCL_P2P_DISABLE", "NCCL_SHM_DISABLE", "GLOO_SOCKET_IFNAME",
+        "MASTER_ADDR", "MASTER_PORT",
+        "KERMT_REPO", "KERMT_REPO_COMMIT", "KERMT_REPO_DIRTY",
+        "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+    )
+    if wandb:
+        names += (
+            "WANDB_API_KEY", "WANDB_BASE_URL", "WANDB_MODE", "WANDB_DIR", "WANDB_ENTITY",
+            "WANDB_PROJECT", "WANDB_RUN_ID", "WANDB_RESUME", "WANDB_CACHE_DIR",
+            "WANDB_CONFIG_DIR", "WANDB_DATA_DIR", "WANDB_DISABLED",
+        )
+    env = {name: value for name in names if (value := os.environ.get(name)) is not None}
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(repo), env.get("PYTHONPATH"))))
+    return env
 
 
 def validate_vocab_file(vocab_path: Path, *, kind: str) -> None:

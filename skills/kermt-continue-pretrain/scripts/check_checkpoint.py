@@ -75,9 +75,14 @@ import json
 import sys
 import traceback
 from argparse import Namespace
+from pathlib import Path
 from typing import Any
 
 import torch
+
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _utils import load_checkpoint  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +296,7 @@ def _arch_from_shapes(state_dict: dict[str, Any], arch: dict[str, Any]) -> tuple
         ]
         if candidates:
             arch["latent_dim"] = int(state_dict[candidates[0]].shape[0])
-        # Absent latent_dist entirely is a fact about the model, not a problem — no warning.
+        # Encoder-only models have no latent distribution; latent_dim remains None.
 
     # depth, num_attn_head, activation, backbone, embedding_output_type, self_attention
     # are not robustly inferable from shapes alone; report a warning for each that's
@@ -390,7 +395,7 @@ def validate(mode: str, ckpt_path: str) -> dict[str, Any]:
 
     # 1. Load the checkpoint.
     try:
-        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        ckpt = load_checkpoint(ckpt_path)
     except FileNotFoundError:
         result["errors"].append(f"checkpoint not found: {ckpt_path}")
         return result

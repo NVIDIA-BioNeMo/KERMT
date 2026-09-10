@@ -62,7 +62,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 from _utils import (  # noqa: E402
     resolve_kermt_repo, assert_prepare_manifest_basics, docker_image_digest, format_cmd_replay,
     git_commit_with_env_override, load_json, merge_default_into_applied,
-    resolve_single_gpu, run_checkpoint_validator,
+    resolve_single_gpu, run_checkpoint_validator, runner_environment,
 )
 
 
@@ -383,7 +383,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         run_manifest["status"] = "dry_run"
         return run_manifest
 
-    env = os.environ.copy()
+    env = runner_environment(REPO_ROOT)
     if distributed:
         # DDP: main.py finetune reads WORLD_SIZE and spawns one process per GPU.
         # Do not pin CUDA_VISIBLE_DEVICES to a single device.

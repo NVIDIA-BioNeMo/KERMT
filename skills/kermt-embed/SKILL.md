@@ -1,6 +1,6 @@
 ---
 name: kermt-embed
-description: Extract per-molecule embeddings from any encoder-bearing KERMT checkpoint (grover_base / cmim / hybrid / finetuned). Writes one .npy per readout type (atom_from_atom, bond_from_atom, atom_from_bond, bond_from_bond) plus canonical_smiles.npy and validity.npy. Calls task/extract_embeddings.py (which featurizes SMILES on the fly — no pre-computed features needed).
+description: Extract per-molecule embeddings from any encoder-bearing KERMT checkpoint. Use a local checkpoint or optionally download a pinned Hugging Face model bundle using HF_TOKEN if configured. Run containerized embedding extraction and write model bundles, per-readout .npy embeddings, canonical SMILES, and validity arrays to user-selected host directories.
 license: Apache-2.0
 compatibility: Requires docker, nvidia-container-toolkit, and a CUDA-capable NVIDIA GPU. Designed for Claude Code, Codex, and Nemotron.
 metadata:
@@ -19,12 +19,22 @@ SMILES, launch the runner blocking, return the per-readout `.npy` files.
 
 ## Skill and runtime paths
 
-Set `SKILL_DIR` to the directory containing this `SKILL.md`. Export
+Set `SKILL_DIR` to the absolute path of this installed skill directory. Export
 `KERMT_REPO` as the absolute path to the KERMT checkout used for model
 execution. The bundled container helper mounts that checkout at
 `/workspace` and this skill at `/skill` (read-only). Commands inside
 the container use `/skill/scripts/`; defaults are bundled in `config/`.
 See [Released models](references/released-models.md) for checkpoint bundle requirements.
+
+## Downloads and local outputs
+
+The optional released-model branch reads `config/released_model.json` for the
+Hugging Face repository, pinned revision, and filenames. The bundled
+`scripts/fetch_released_model.py` downloads the model bundle over HTTPS into
+the host directory the user selects. Public models work without credentials;
+if `HF_TOKEN` is set, the container helper forwards it for Hugging Face
+authentication. Prepared data, logs, and workflow results go into the chosen
+run directory.
 
 ## Hardware requirements
 
