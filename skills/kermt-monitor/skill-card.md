@@ -1,69 +1,83 @@
 ## Description: <br>
-Reports progress for a detached KERMT run by reading `run.json`, querying Docker for container state, tailing the pretrain/finetune log, and parsing progress lines (epoch, step, validation loss). <br>
+Check progress for a detached KERMT run (pretrain, finetune, or any kermt_run_detached invocation). Reads run.json, queries docker for container state, tails the pretrain/finetune log, and parses progress lines (epoch, step, val loss). <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
 ## Owner
-NVIDIA (evax@nvidia.com) <br>
+NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache-2.0 <br>
-
+Apache 2.0 <br>
 ## Use Case: <br>
-ML engineers running long KERMT pretraining or finetuning jobs who need to check status, spot divergence early, and decide whether to let a run continue or terminate it. This is the companion skill to every detached `kermt-*` training invocation. <br>
-
-### Requirements/Dependencies: <br>
-Requires API Key or External Credential: No <br>
-Credential Type(s): None <br>
-
-* Docker <br>
-* `jq` <br>
-* A prior detached KERMT run that produced a `run.json` <br>
-
-Note: unlike the training skills, this skill does not require a GPU. <br>
-
-Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
+Developers and engineers monitoring detached KERMT training and finetuning runs to check container state, training progress, and metrics without interrupting the running job. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
+
 ## Known Risks and Mitigations: <br>
-Risk: A stale or missing `run.json` can cause the skill to report on the wrong run, or to report nothing while a job is in fact still consuming GPU-hours. <br>
-Mitigation: The skill refuses to proceed when `run.json` is missing, and reports container identifiers so the user can verify the run directly. Because `run.json` does not record a container name, pass `--container <name-or-id>` when monitoring a specific run. <br>
-
-Risk: Log tailing surfaces run output into the agent transcript, which may include file paths or environment details. <br>
-Mitigation: The skill reads only the pretrain/finetune log; users should treat agent transcripts as sensitive and avoid pasting credentials into run configuration. <br>
-
-Risk: This skill is read-only and cannot stop a runaway job, so a user may assume monitoring implies control. <br>
-Mitigation: The skill reports container identifiers so the user can terminate the run directly via Docker if needed. <br>
+Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
+Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [KERMT repository](https://github.com/NVIDIA-BioNeMo/KERMT) <br>
-- Related skills: `kermt-pretrain-scratch`, `kermt-continue-pretrain`, `kermt-finetune` <br>
+- [KERMT: Multitask finetuning and acceleration of chemical pretrained models](https://arxiv.org/abs/2510.12719) <br>
+- [GROVER: Self-Supervised Message Passing Transformer on Large-Scale Molecular Data](https://arxiv.org/abs/2007.02835) <br>
+
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis] <br>
-**Output Format:** [Markdown status report] <br>
-**Output Parameters:** [1D — container state, current epoch, current step, latest validation loss] <br>
-**Other Properties Related to Output:** [Read-only; the skill makes no changes to the run or the host] <br>
+**Output Type(s):** [Shell commands, Analysis] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Parameters:** [1D] <br>
+**Other Properties Related to Output:** [Supports --json flag for structured JSON output] <br>
 
 ## Evaluation Agents Used: <br>
-Target agents: `claude-code`, `codex`. NVSkills-Eval has not yet been run against this skill — see Evaluation Results. <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
+
+
 
 ## Evaluation Tasks: <br>
-4 evaluation tasks defined in `evals/evals.json`, covering run discovery, container-state reporting, and log progress parsing. <br>
+4 evaluation tasks (3 positive, 1 negative), each with 3 attempts per task in isolated k8s-sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
-Planned NVSkills-Eval dimensions: Security, Correctness, Discoverability, Effectiveness, Efficiency. <br>
+Reported benchmark dimensions: <br>
+- Security: Is it safe to use? Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Is the answer correct? Checks final-answer correctness against the reference answer. <br>
+- Discoverability: Was the right skill loaded when needed? Checks whether the expected skill was selected and the workflow executed. <br>
+- Effectiveness: Did the skill help complete the task? Equal-weight mean of goal completion and expected workflow adherence. <br>
+- Efficiency: Did it avoid wasted tool calls and token usage? 50% tool-call productivity and 50% token efficiency. <br>
+
+Underlying evaluation signals used in this run: <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `accuracy`: Checks final-answer correctness against the reference answer. <br>
+- `skill_execution`: Checks whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `goal_accuracy`: Checks whether the user's goal was achieved. <br>
+- `behavior_check`: Checks whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Measures tool-call productivity. <br>
+- `token_efficiency`: Measures actual uncached prompt plus completion usage. <br>
+
+
 
 ## Evaluation Results: <br>
-Pending. NVSkills-Eval has not been run for this skill; results and a `BENCHMARK.md` will be published when the evaluation pipeline runs. <br>
+| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
+|---|---:|---:|
+| Overall | 92.6% | 76.5% |
+| Security | 100.0% → 100.0% (±0.0 points) | 50.0% → 75.0% (+25.0 points) |
+| Correctness | 28.0% → 100.0% (+72.0 points) | 32.0% → 70.0% (+38.0 points) |
+| Discoverability | 96.7% | 91.7% |
+| Effectiveness | 31.5% → 79.4% (+47.9 points) | 27.5% → 51.3% (+23.8 points) |
+| Efficiency | 86.8% | 94.8% |
 
 ## Skill Version(s): <br>
-b1c082c (source: git SHA, committed 2026-07-17) <br>
+77111e0 (source: git SHA, committed 2026-09-09) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
 
 (For Release on NVIDIA Platforms Only) <br>
-Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://www.nvidia.com/en-us/support/submit-security-vulnerability/). <br>
+Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://app.intigriti.com/programs/nvidia/nvidiavdp/detail). <br>
