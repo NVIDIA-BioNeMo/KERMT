@@ -343,7 +343,8 @@ def split_data(data: MoleculeDataset,
     :param logger: A logger.
     :return: A tuple containing the train, validation, and test splits of the data.
     """
-    assert len(sizes) == 3 and sum(sizes) == 1
+    # Compare with a tolerance: e.g. 0.7 + 0.2 + 0.1 == 0.9999999999999999 in floating point.
+    assert len(sizes) == 3 and math.isclose(sum(sizes), 1.0, abs_tol=1e-6)
 
     if args is not None:
         folds_file, val_fold_index, test_fold_index = \
@@ -528,7 +529,7 @@ def scaffold_split(data: MoleculeDataset,
     :param logger: A logger.
     :return: A tuple containing the train, validation, and test splits of the data.
     """
-    assert sum(sizes) == 1
+    assert math.isclose(sum(sizes), 1.0, abs_tol=1e-6)
 
     # Split
     train_size, val_size, test_size = sizes[0] * len(data), sizes[1] * len(data), sizes[2] * len(data)

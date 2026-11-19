@@ -416,7 +416,7 @@ def split_data(data, split_type='random', sizes=(0.8, 0.1, 0.1), seed=0, logger=
     Returns:
         (train_dataset, val_dataset, test_dataset)
     """
-    assert len(sizes) == 3 and sum(sizes) == 1
+    assert len(sizes) == 3 and math.isclose(sum(sizes), 1.0, abs_tol=1e-6)
 
     if split_type == "random":
         data.shuffle(seed=seed)
